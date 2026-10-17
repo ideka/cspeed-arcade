@@ -53,8 +53,9 @@ out = '''// license:BSD-3-Clause
 namespace adsp {
 
 namespace {
-constexpr uint32_t BIT(uint32_t x, int n) { return (x >> n) & 1; }
-constexpr uint32_t BIT(uint32_t x, int n, int w) { return (x >> n) & ((1u << w) - 1); }
+// As MAME's: on the argument's own type (the MAC overflow check takes bits 31-39 of a 64-bit value).
+template <typename T> constexpr T BIT(T x, int n) { return (x >> n) & T(1); }
+template <typename T> constexpr T BIT(T x, int n, int w) { return (x >> n) & ((T(1) << w) - 1); }
 template <typename... A> void logerror(const char *fmt, A... a) { fprintf(stderr, fmt, a...); }
 }
 

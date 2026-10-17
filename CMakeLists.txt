@@ -19,6 +19,8 @@ file(GLOB RUNTIME_SOURCES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/runtime/*.cpp ${
 add_executable(CaliforniaSpeedArcade ${RUNTIME_SOURCES})
 target_include_directories(CaliforniaSpeedArcade PRIVATE ${CMAKE_SOURCE_DIR}/runtime)
 target_link_libraries(CaliforniaSpeedArcade PRIVATE GuestCode chdr-static dbghelp)
+# MAME's ADSP core type-puns registers through unions and pointers (MAME builds without strict aliasing).
+set_source_files_properties(${CMAKE_SOURCE_DIR}/runtime/adsp/adsp21xx.cpp PROPERTIES COMPILE_OPTIONS /clang:-fno-strict-aliasing)
 
 
 # SDL2 (window, OpenGL context, audio, controllers): the official Windows development package.

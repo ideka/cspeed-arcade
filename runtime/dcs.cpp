@@ -19,6 +19,7 @@ namespace {
 using adsp::adsp21xx_device;
 
 const uint64_t DSP_HZ = 16000000;
+const size_t FIFO_SIZE = 512; // the I/O ASIC's sound FIFO, in words (as MAME)
 const uint16_t LCTRL_OUTPUT_EMPTY = 0x400, LCTRL_INPUT_EMPTY = 0x800;
 
 enum {
@@ -63,6 +64,9 @@ struct Dcs : adsp::Bus {
     std::vector<int16_t> audio; // interleaved stereo, consumed by the audio output
     FILE *wav = nullptr;        // ARC_DUMP_AUDIO: raw output as a WAV file
     uint32_t wav_bytes = 0;
+    uint64_t samples_out = 0;   // stereo frames produced (for log timestamps)
+    FILE *dsp_trace = getenv("ARC_DSP_TRACE") ? fopen(getenv("ARC_DSP_TRACE"), "w") : nullptr;
+    int dsp_trace_state = 0;
 
     void wav_header() {
         if (!wav) return;
@@ -162,7 +166,7 @@ struct Dcs : adsp::Bus {
             sounddata[off] = d;
             return;
         }
-        if (rom_window(a, off)) return;
+        // The ROM window is read-only: writes reach what is mapped underneath (as MAME's read bank).
         if (a >= 0x400 && a < 0x408) {
             switch (a) {
             case 0x400: input_latch_ack(); break;
@@ -219,7 +223,8 @@ struct Dcs : adsp::Bus {
         uint16_t r = 0;
         if (!(latch_control & LCTRL_INPUT_EMPTY)) r |= 0x80;
         if (latch_control & LCTRL_OUTPUT_EMPTY) r |= 0x40;
-        r |= fifo_status() & 0x38;
+        if (transfer.state == 0) r |= fifo_status() & 0x38;
+        else r |= 0x08; // a shortcut transfer is in progress: the DSP sees an empty FIFO
         return r;
     }
     void input_latch_ack() {
@@ -368,6 +373,7 @@ struct Dcs : adsp::Bus {
     void sound_irq() {
         int reg = (int)cpu.i_reg(ireg);
         int count = size / (2 * (incs ? incs : 1));
+        samples_out += count / 2;
         for (int i = 0; i < count; i++) {
             audio.push_back((int16_t)data_read((uint32_t)reg & 0x3FFF));
             reg += incs;
@@ -408,17 +414,83 @@ struct Dcs : adsp::Bus {
         timer_enable = false;
         timer_scale = 1;
         timer_next = sound_next = sport0_next = ~0ull;
+        transfer = Transfer();
+        replies.clear();
+        watchdog_writes = -1;
     }
 
     // ---- running ----
 
+    // ARC_DSP_DUMP=<seconds>: dumps program memory to dsp_pm.bin at that time, then profiles the PC
+    // for a second (dsp_profile.txt).
+    double dump_at = getenv("ARC_DSP_DUMP") ? atof(getenv("ARC_DSP_DUMP")) : -1;
+    std::vector<uint32_t> pc_hist = std::vector<uint32_t>(0x4000);
+    int profiling = 0; // 0 no, 1 running, 2 done
+    uint64_t profile_end = 0;
+
+    void debug_hooks() {
+        if (dump_at < 0 || profiling == 2) return;
+        double t = now_ns() / 1e9;
+        if (!profiling && t >= dump_at) {
+            FILE *f = fopen("dsp_pm.bin", "wb");
+            for (uint32_t a = 0; a < 0x4000; a++) {
+                uint32_t w = program_read(a);
+                fwrite(&w, 4, 1, f);
+            }
+            fclose(f);
+            f = fopen("dsp_dm.bin", "wb"); // SRAM data bank 0 (0800-37ff), then internal RAM (3800-39ff)
+            fwrite(sram.data(), 2, 0x3000, f);
+            fwrite(iram, 2, 0x200, f);
+            fclose(f);
+            profiling = 1;
+            profile_end = cycles + DSP_HZ;
+            log("dcs: program memory dumped, profiling");
+        } else if (profiling == 1 && cycles >= profile_end) {
+            FILE *f = fopen("dsp_profile.txt", "w");
+            std::vector<std::pair<uint32_t, uint32_t>> v;
+            for (uint32_t a = 0; a < 0x4000; a++) if (pc_hist[a]) v.push_back({pc_hist[a], a});
+            std::sort(v.rbegin(), v.rend());
+            for (auto &[n, a] : v) fprintf(f, "%04x %u\n", a, n);
+            fclose(f);
+            profiling = 2;
+            log("dcs: profile written");
+        }
+    }
+
     void run_until(uint64_t target) {
+        debug_hooks();
         while (cycles < target) {
+            // ARC_DSP_TRACE: registers at each instruction of the first effect frame (from 2955 to the
+            // wait loop at 2c71), in the format of a MAME debugger trace.
+            if (dsp_trace && dsp_trace_state < 2 && samples_out > 31250 * 6) {
+                uint32_t pc = cpu.pc();
+                if (dsp_trace_state == 0 && pc == 0x2955) dsp_trace_state = 1;
+                if (dsp_trace_state == 1) {
+                    if (pc == 0x2C71) {
+                        dsp_trace_state = 2;
+                        fclose(dsp_trace);
+                        log("dcs: trace written");
+                    } else {
+                        cpu.trace_registers(dsp_trace);
+                        fprintf(dsp_trace, "%04X:\n", pc);
+                    }
+                }
+                cycles += (uint64_t)cpu.run(1);
+                if (cycles >= timer_next || cycles >= sound_next || cycles >= sport0_next) goto events;
+                continue;
+            }
+            if (profiling == 1) {
+                cycles += (uint64_t)cpu.run(7);
+                pc_hist[cpu.pc() & 0x3FFF]++;
+                if (cycles >= timer_next || cycles >= sound_next || cycles >= sport0_next) goto events;
+                continue;
+            }
             uint64_t next = std::min({target, timer_next, sound_next, sport0_next});
             if (next > cycles) {
                 int slice = (int)std::min<uint64_t>(next - cycles, 100000);
                 cycles += (uint64_t)cpu.run(slice);
             }
+        events:
             if (cycles >= timer_next) {
                 timers_fired++;
                 schedule_timer();
@@ -440,6 +512,8 @@ struct Dcs : adsp::Bus {
         if (!last_ns) last_ns = now;
         uint64_t dt = now - last_ns;
         last_ns = now;
+        transfer_watchdog(now);
+        send_replies();
         if (in_reset) return;
         if (dt > 50000000) dt = 50000000; // do not try to catch up more than 50 ms
         static uint64_t last_header;
@@ -470,9 +544,137 @@ struct Dcs : adsp::Bus {
         size_t n = fifo.size() - fifo_out;
         uint16_t r = 0;
         if (n == 0) r |= 0x08;
-        if (n >= 512) r |= 0x10;
-        if (n >= 1024) r |= 0x20;
+        if (n >= FIFO_SIZE / 2) r |= 0x10;
+        if (n >= FIFO_SIZE) r |= 0x20;
         return r;
+    }
+
+    // ---- transfer shortcut (MAME's "HLE transfers") ----
+    // The main CPU uploads the sound system (command 0x001a) and sound banks (0x55d0/0x55d1, also
+    // through the FIFO) a word at a time. As MAME does, these go straight into memory and the
+    // checksum replies are sent here, instead of through the DSP's own receive loop.
+    struct Transfer {
+        int dcs_state = 0, state = 0, start = 0, stop = 0, type = 0, temp = 0, writes_left = 0;
+        uint16_t sum = 0;
+    } transfer;
+    // Replies waiting for the output latch to be free: (word, set output_control 0x03xx after).
+    std::vector<std::pair<uint16_t, bool>> replies;
+    uint64_t watchdog_ns = 0;
+    int watchdog_writes = -1;
+
+    // Each reply goes out a little after the latch is free (MAME uses 1 us timers), so that the
+    // host's acknowledge of the previous word does not discard it.
+    uint64_t reply_at = 0;
+    void send_replies() {
+        if (replies.empty() || !(latch_control & LCTRL_OUTPUT_EMPTY)) return;
+        uint64_t now = now_ns();
+        if (!reply_at) reply_at = now + 2000;
+        if (now < reply_at) return;
+        reply_at = 0;
+        {
+            auto [w, control] = replies.front();
+            replies.erase(replies.begin());
+            output_latch(w);
+            if (control) output_control = (output_control & ~0xFF00) | 0x0300;
+        }
+    }
+
+    bool stage1(uint16_t data) {
+        Transfer &t = transfer;
+        switch (t.state) {
+        case 0:
+            if (data == 0x001A) {
+                t.state++;
+                return true;
+            }
+            if (data == 0x002A) {
+                t.dcs_state = 1;
+                log("dcs: start the uploaded program");
+            }
+            return false;
+        case 1: t.start = data; t.state++; return true;
+        case 2: t.stop = data; t.state++; return true;
+        case 3:
+            t.type = data;
+            t.state++;
+            t.writes_left = t.stop - t.start + 1;
+            if (t.type == 0) t.writes_left *= 2;
+            log("dcs: upload %04x-%04x type %d (SDRC %04x %04x %04x)", t.start, t.stop, t.type, sdrc[0], sdrc[1], sdrc[2]);
+            t.sum = 0;
+            if (t.type == 1 && sdrc_sm_bk() == 1) sdrc[0] &= ~0x1000;
+            if (t.type == 2 && sdrc_sm_bk() == 0) sdrc[0] |= 0x1000;
+            return true;
+        case 4:
+            t.sum += data;
+            if (--t.writes_left == 0) t.state = 0;
+            if (t.type == 0) {
+                if (t.writes_left & 1) t.temp = data;
+                else program_write((uint32_t)t.start++ & 0x3FFF, ((uint32_t)t.temp << 8) | (data & 0xFF));
+            } else {
+                data_write((uint32_t)t.start++ & 0x3FFF, data);
+            }
+            if (t.state == 0) {
+                replies.push_back({t.sum, false});
+                replies.push_back({0x000A, false});
+            }
+            return true;
+        }
+        return false;
+    }
+
+    bool stage2(uint16_t data) {
+        Transfer &t = transfer;
+        switch (t.state) {
+        case 0:
+            if (data == 0x55D0 || data == 0x55D1) {
+                t.state++;
+                return true;
+            }
+            return false;
+        case 1: t.start = data << 16; t.state++; return true;
+        case 2: t.start |= data; t.state++; return true;
+        case 3: t.stop = data << 16; t.state++; return true;
+        case 4:
+            t.stop |= data;
+            t.state++;
+            t.writes_left = t.stop - t.start + 1;
+            t.sum = 0;
+            watchdog_ns = now_ns() + 1000000;
+            watchdog_writes = t.writes_left;
+            return true;
+        case 5:
+            t.sum += data;
+            if (--t.writes_left == 0) t.state = 0;
+            sounddata[(size_t)t.start++ % sounddata.size()] = data;
+            if (t.state == 0) {
+                replies.push_back({t.sum, true});
+                watchdog_writes = -1;
+            }
+            return true;
+        }
+        return false;
+    }
+
+    bool preprocess(uint16_t data) {
+        bool done = transfer.dcs_state == 0 ? stage1(data) : stage2(data);
+        if (done) send_replies();
+        return done;
+    }
+
+    // During a bank transfer, FIFO data is part of it.
+    void fifo_notify() {
+        if (transfer.state == 0) return;
+        size_t n = fifo.size() - fifo_out;
+        if (transfer.state != 5 || (int)n == transfer.writes_left || n >= 256)
+            while (fifo_out < fifo.size()) preprocess(fifo_read());
+    }
+
+    void transfer_watchdog(uint64_t now) {
+        if (watchdog_writes < 0 || now < watchdog_ns) return;
+        watchdog_ns = now + 1000000;
+        if (fifo_out < fifo.size() && watchdog_writes == transfer.writes_left)
+            while (fifo_out < fifo.size()) preprocess(fifo_read());
+        watchdog_writes = transfer.writes_left;
     }
 
     void sound_irq_changed();
@@ -508,6 +710,15 @@ bool dcs_output_full() { return !(dcs->latch_control & LCTRL_OUTPUT_EMPTY); }
 bool dcs_input_empty() { return dcs->latch_control & LCTRL_INPUT_EMPTY; }
 
 void dcs_data_write(uint16_t d) {
+    static int lost;
+    if (!(dcs->latch_control & LCTRL_INPUT_EMPTY) && lost++ < 20)
+        log("dcs: host wrote %04x while the DSP still had %04x unread", d, dcs->input_data);
+    static FILE *trace = getenv("ARC_DCS_LOG") ? fopen(getenv("ARC_DCS_LOG"), "w") : nullptr;
+    if (trace) fprintf(trace, "%.6f a%.3f host->dsp %04x\n", now_ns() / 1e9, dcs->samples_out / 31250.0, d);
+    if (dcs->preprocess(d)) {
+        dcs->sound_irq_changed(); // the input latch stays empty: the I/O ASIC's "can write" interrupt
+        return;
+    }
     dcs->cpu.set_input_line(adsp::ADSP2115_IRQ2, adsp::ASSERT_LINE);
     dcs->latch_control &= ~LCTRL_INPUT_EMPTY;
     dcs->input_data = d;
@@ -516,11 +727,14 @@ void dcs_data_write(uint16_t d) {
 
 uint16_t dcs_data_read() {
     uint16_t v = dcs->output_data;
+    static FILE *trace = getenv("ARC_DCS_LOG") ? fopen("dcs_read.log", "w") : nullptr;
+    if (trace) fprintf(trace, "%.6f dsp->host %04x %s\n", now_ns() / 1e9, v, (dcs->latch_control & LCTRL_OUTPUT_EMPTY) ? "(empty)" : "");
     return v;
 }
 
 void dcs_ack() {
     dcs->latch_control |= LCTRL_OUTPUT_EMPTY;
+    dcs->send_replies();
     dcs->sound_irq_changed();
 }
 
@@ -535,7 +749,13 @@ void dcs_reset_line(bool high) {
 }
 
 void dcs_fifo_write(uint16_t d) {
-    if (dcs->fifo.size() - dcs->fifo_out < 1024) dcs->fifo.push_back(d);
+    static FILE *dump = getenv("ARC_DUMP_FIFO") ? fopen(getenv("ARC_DUMP_FIFO"), "wb") : nullptr;
+    if (dump) {
+        fwrite(&d, 2, 1, dump);
+        fflush(dump);
+    }
+    if (dcs->fifo.size() - dcs->fifo_out < FIFO_SIZE) dcs->fifo.push_back(d);
+    dcs->fifo_notify();
     dcs->sound_irq_changed();
 }
 void dcs_fifo_reset() {

@@ -14,3 +14,11 @@ trace_dump*.txt
 __pycache__/
 /*.wav
 /*.png
+# DSP dumps and traces (contain the game's sound program)
+/*.bin
+/*.asm
+/*.tr
+/dsp_profile.txt
+/prof_*.txt
+/saved_state/
+/tools/adspdis/*.exe

@@ -7,6 +7,7 @@
 #pragma once
 
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <type_traits>
 
@@ -78,6 +79,15 @@ public:
     int32_t m_reg(int n) const { return m_m[n]; }
     uint32_t l_reg(int n) const { return m_l[n]; }
     uint32_t pc() const { return m_pc; }
+    // One line of registers in the format of the MAME debugger trace used for comparisons.
+    void trace_registers(FILE *f) const {
+        const adsp_core &r = m_core;
+        fprintf(f, "R %04X %04X %04X %04X %04X %04X %04X %04X %04X %04X %04X %04X %04X %04X %04X %04X %04X"
+                   " %04X %04X %04X %04X %04X %04X %04X %04X %04X %04X %04X %04X\n",
+                r.ax0.u, r.ax1.u, r.ay0.u, r.ay1.u, r.ar.u, r.af.u, r.mx0.u, r.mx1.u, r.my0.u, r.my1.u,
+                r.mr.mrx.mr0.u, r.mr.mrx.mr1.u, r.mr.mrx.mr2.u, r.si.u, r.se.u, r.sr.srx.sr0.u, r.sr.srx.sr1.u,
+                m_i[0], m_i[1], m_i[2], m_i[3], m_i[4], m_i[5], m_i[6], m_i[7], m_cntr, m_astat, m_mstat, m_l[6]);
+    }
 
 protected:
     // framework replacements used by the MAME code

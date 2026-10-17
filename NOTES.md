@@ -51,6 +51,10 @@ gears, F2 test (operator menu), 9 service. Three coins per credit on the default
 
 ARC_SCALE (GPU internal resolution, default 3), ARC_RENDERER=sw|both, ARC_HEADLESS, ARC_INPUT
 (scripted input), ARC_DUMP_FRAMES, ARC_DUMP_AUDIO, ARC_WATCH, ARC_CALLTRACE, ARC_TRACE_MMIO[=device].
+Sound debugging: ARC_DCS_LOG=file (host->DSP words, stamped with host and audio time), ARC_DUMP_FIFO,
+ARC_DSP_DUMP=<seconds> (program/data memory dumps and a 1 s PC profile), ARC_DSP_TRACE=file (registers
+at each instruction of the first effect frame, in the format of a MAME debugger trace with
+`tracelog`, for diffing against MAME). `tools/adspdis` disassembles a program memory dump.
 
 ## Next
 

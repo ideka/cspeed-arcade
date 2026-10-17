@@ -3,6 +3,9 @@
 #include "board.h"
 #include "dcs.h"
 
+#include <cstdio>
+#include <cstdlib>
+
 namespace rt {
 
 uint16_t sound_status() {
@@ -19,7 +22,11 @@ uint16_t sound_data_read() {
 }
 
 void sound_data_write(uint16_t v) { dcs_data_write(v); }
-void sound_ack() { dcs_ack(); }
+void sound_ack() {
+    static FILE *trace = getenv("ARC_DCS_LOG") ? fopen("dcs_ack.log", "w") : nullptr;
+    if (trace) fprintf(trace, "%.6f host ack\n", now_ns() / 1e9);
+    dcs_ack();
+}
 
 void sound_control(uint16_t, uint16_t v) {
     dcs_reset_line(v & 1);
