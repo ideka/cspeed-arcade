@@ -34,15 +34,27 @@ Run: `build/CaliforniaSpeedArcade.exe data`. Debug env vars:
 
 ## Where it is
 
-Boots from BootUp (boot_entry's work done in main.cpp), Glide init passes, disk mounts, game runs
-the attract mode (demo race, high scores) with the software renderer. Then stalls on the flag
-screen (probably a movie waiting for the sound board).
+Playable: boots, attract mode, coin-up, track and car select, races at the original 57 frames/s,
+rendered on the GPU (3x by default), with DCS2 sound and controller/keyboard input.
 
-Workarounds in place: UnLock (I/O ASIC unlock) and SoundInit are native stubs; DIP switch 1 is on
-to skip the force-feedback wheel calibration; IDE bus-master BAR defaults to 0xF00.
+Workarounds in place: UnLock (I/O ASIC unlock) is a native stub; DIP switch 1 is on to skip the
+force-feedback wheel calibration; the IDE bus-master BAR defaults to 0xF00; boot_entry's cache
+probing results are written by main.cpp.
+
+## Controls
+
+Controller: left stick steer, RT/LT (or A/B) accelerator/brake, Start, Back = coin, X/Y/RB views,
+LB radio, d-pad gears 1-4. Keyboard: arrows, Enter/1 start, 5 coin, Q/W/E views, R radio, A/S/D/F
+gears, F2 test (operator menu), 9 service. Three coins per credit on the default settings.
+
+## Environment variables
+
+ARC_SCALE (GPU internal resolution, default 3), ARC_RENDERER=sw|both, ARC_HEADLESS, ARC_INPUT
+(scripted input), ARC_DUMP_FRAMES, ARC_DUMP_AUDIO, ARC_WATCH, ARC_CALLTRACE, ARC_TRACE_MMIO[=device].
 
 ## Next
 
-1. DCS2 sound board (port MAME adsp2100 + dcs), replaces the SoundInit stub.
-2. Window, GPU renderer (upscaling) and controller input.
-3. Performance: the software renderer manages ~14 frames/s.
+- Free play / operator settings defaults; idle the host CPU in the game's wait loops.
+- Frame pacing against the host display (57 Hz game on 60+ Hz screens), widescreen, settings UI.
+- The "No VSYNC interrupts detected" boot message; a translucent rectangle seen on the left of
+  the race view (check against the software renderer).

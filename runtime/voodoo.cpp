@@ -12,6 +12,8 @@
 
 #include <cstring>
 
+namespace rt { volatile uint64_t swap_count; } // buffer swaps, for the frame rate
+
 namespace {
 
 using namespace rt;
@@ -145,6 +147,7 @@ struct Voodoo : Device {
     }
 
     void do_swap() {
+        swap_count++;
         std::swap(frontbuf, backbuf);
         generation++;
         if (swaps_pending) swaps_pending--;

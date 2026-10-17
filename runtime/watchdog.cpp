@@ -90,6 +90,10 @@ void watchdog_start() {
             uint32_t pc = rt_last_loop_pc;
             extern Ctx *main_ctx;
             uint32_t irq_lines_debug();
+            extern volatile uint64_t swap_count;
+            static uint64_t last_swaps;
+            log("watch: %.1f frames/s", (swap_count - last_swaps) / 3.0);
+            last_swaps = swap_count;
             static uint64_t last_render, last_time;
             uint64_t t = now_ns(), r = sw_render_ns;
             if (last_time) log("watch: rendering took %.0f%% of the time", 100.0 * (r - last_render) / (t - last_time));
