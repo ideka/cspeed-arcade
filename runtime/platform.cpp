@@ -5,6 +5,11 @@
 #include "runtime.h"
 #include "board.h"
 
+#include <SDL_syswm.h>
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -221,12 +226,24 @@ bool platform_init(bool headless) {
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
+    // ARC_BACKGROUND (for test runs): the window opens behind the others without taking the focus.
+    bool background = getenv("ARC_BACKGROUND") != nullptr;
+    if (background) SDL_SetHint(SDL_HINT_WINDOW_NO_ACTIVATION_WHEN_SHOWN, "1");
     window = SDL_CreateWindow("California Speed (arcade)", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 1024, 768,
-                              SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
+                              SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI |
+                                  (background ? SDL_WINDOW_HIDDEN : 0));
     if (!window) {
         log("window: %s", SDL_GetError());
         return false;
     }
+#ifdef _WIN32
+    if (background) {
+        SDL_SysWMinfo wm;
+        SDL_VERSION(&wm.version);
+        if (SDL_GetWindowWMInfo(window, &wm))
+            SetWindowPos(wm.info.win.window, HWND_BOTTOM, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    }
+#endif
     context = SDL_GL_CreateContext(window);
     if (!context || !gl_load()) return false;
     SDL_GL_SetSwapInterval(0); // the game's own timing paces the frames

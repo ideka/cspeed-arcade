@@ -54,6 +54,8 @@ void devices_init(const char *data_dir) {
     // ARC_RENDERER=sw: the software rasterizer (also used headless); otherwise the GPU, at ARC_SCALE.
     static rt::SoftwareRenderer sw;
     if (const char *d = getenv("ARC_DUMP_FRAMES")) sw.dump_dir = d;
+    if (const char *d = getenv("ARC_DUMP_EVERY")) sw.dump_every = std::max(1, atoi(d));
+    if (const char *d = getenv("ARC_DUMP_FROM")) sw.dump_from = atoi(d);
     const char *r = getenv("ARC_RENDERER");
     bool software = getenv("ARC_HEADLESS") || (r && !strcmp(r, "sw"));
     int scale = getenv("ARC_SCALE") ? atoi(getenv("ARC_SCALE")) : 3;

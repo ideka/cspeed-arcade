@@ -837,7 +837,7 @@ void SoftwareRenderer::vblank(const VoodooState &st) {
     if (w <= 0 || h <= 0 || w > (int)st.fb.rowpixels) { w = (int)st.fb.rowpixels; h = st.yorigin + 1; }
     if (st.fb.front + (size_t)h * st.fb.rowpixels * 2 <= (2u << 20))
         platform_present_565((const uint16_t *)(st.fb.ram + st.fb.front), w, h, (int)st.fb.rowpixels);
-    if (dump_dir.empty() || frame % dump_every) return;
+    if (dump_dir.empty() || frame % dump_every || frame < dump_from) return;
     std::vector<uint8_t> rgb(w * h * 3);
     const uint16_t *src = (const uint16_t *)(st.fb.ram + st.fb.front);
     for (int y = 0; y < h; y++)

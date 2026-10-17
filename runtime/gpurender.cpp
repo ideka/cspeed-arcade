@@ -329,6 +329,7 @@ struct CachedTexture {
     uint64_t generation;  // sum of page generations when decoded
     uint64_t last_used;
     uint32_t params[4];   // sampler state last applied
+    int lod_first;        // GL level 0 is this Voodoo LOD
 };
 
 struct GpuRenderer : Renderer {
@@ -486,6 +487,12 @@ struct GpuRenderer : Renderer {
         have_state = false;
     }
 
+    // Raw LFB writes are kept aside and composited in one go; drawing on top of them needs them first.
+    void composite_pending_lfb(uint32_t offset) {
+        auto it = buffers.find(offset);
+        if (it != buffers.end() && it->second.lfb_y1 >= it->second.lfb_y0) flush_lfb(offset);
+    }
+
     void flush_all_lfb() {
         for (auto &[off, b] : buffers) flush_lfb(off);
     }
@@ -496,6 +503,7 @@ struct GpuRenderer : Renderer {
         if (off == ~0u) return;
         int scry = (st.fbi[vFbzMode] & (1 << 17)) ? st.yorigin - y : y;
         DrawState ds = capture(st, 0, 1, off);
+        composite_pending_lfb(off);
         use_state(ds, GL_POINTS);
         Vertex v{};
         v.x = x + 0.5f;
@@ -605,14 +613,23 @@ struct GpuRenderer : Renderer {
         uint32_t lut[256] = {};
         bool needs_lut = ti.format < 8 || ti.format == 8 || ti.format == 9 || ti.format >= 13;
         if (needs_lut) build_lookup(st, ti.format, lut);
+        // Only the LODs the texture can use (lodmin..lodmax) are decoded and watched for writes:
+        // LOD 0 is always 256 texels wide, and textures that start at a smaller LOD share its
+        // address range with others.
+        int first = std::clamp((int)ti.lodmin, 0, 8), last = std::clamp((int)std::ceil(ti.lodmax), first, 8);
         uint64_t key = hash64(&ti.format, sizeof(uint32_t) * 4);
         key = hash64(ti.lodoffset, sizeof(ti.lodoffset), key);
+        int range[2] = {first, last};
+        key = hash64(range, sizeof(range), key);
         if (ti.format == 1 || ti.format == 5 || ti.format == 9 || ti.format == 14) key = hash64(lut, sizeof(lut), key); // NCC / palette
         uint32_t bpt = ti.format < 8 ? 1 : 2;
-        uint32_t lo = ti.lodoffset[0], hi = lo + ((ti.wmask + 1) * (ti.hmask + 1) * 2) * bpt;
-        for (int lod = 1; lod <= 8; lod++) {
-            lo = std::min(lo, ti.lodoffset[lod]);
-            hi = std::max(hi, ti.lodoffset[lod] + 4 * bpt);
+        auto source_lod = [&](int lod) { return (!(ti.lodmask & (1u << lod)) && lod < 8) ? lod + 1 : lod; }; // split LODs (one TMU)
+        uint32_t lo = ~0u, hi = 0;
+        for (int lod = first; lod <= last; lod++) {
+            int src = source_lod(lod);
+            uint32_t texels = ((ti.wmask >> src) + 1) * ((ti.hmask >> src) + 1);
+            lo = std::min(lo, ti.lodoffset[src]);
+            hi = std::max(hi, ti.lodoffset[src] + texels * bpt);
         }
         uint32_t page_lo = lo >> 12, page_hi = std::min<uint32_t>((hi + 4095) >> 12, 1024);
         uint64_t gen = 0;
@@ -633,11 +650,10 @@ struct GpuRenderer : Renderer {
         glBindTexture(GL_TEXTURE_2D, tex);
         std::vector<uint32_t> pixels;
         int levels = 0;
-        for (int lod = 0; lod <= 8; lod++) {
+        for (int lod = first; lod <= last; lod++) {
             uint32_t w = (ti.wmask >> lod) + 1, h = (ti.hmask >> lod) + 1;
             pixels.resize((size_t)w * h);
-            int src = lod;
-            if (!(ti.lodmask & (1u << lod)) && lod < 8) src = lod + 1; // split LODs: the next one (one TMU)
+            int src = source_lod(lod);
             uint32_t base = ti.lodoffset[src];
             for (uint32_t t = 0; t < h; t++)
                 for (uint32_t s = 0; s < w; s++) {
@@ -655,13 +671,13 @@ struct GpuRenderer : Renderer {
                     // ARGB -> RGBA bytes
                     pixels[(size_t)t * w + s] = (c & 0xFF00FF00u) | ((c >> 16) & 0xFF) | ((c & 0xFF) << 16);
                 }
-            glTexImage2D(GL_TEXTURE_2D, lod, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
-            levels = lod;
+            levels = lod - first;
+            glTexImage2D(GL_TEXTURE_2D, levels, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
             if (w == 1 && h == 1) break;
         }
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, levels);
         CachedTexture &ct = textures[key];
-        ct = CachedTexture{tex, key, page_lo, page_hi, gen, frame, {~0u, ~0u, ~0u, ~0u}};
+        ct = CachedTexture{tex, key, page_lo, page_hi, gen, frame, {~0u, ~0u, ~0u, ~0u}, first};
         apply_tex_params(ct, st, ti);
         return tex;
     }
@@ -696,8 +712,8 @@ struct GpuRenderer : Renderer {
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, magf ? GL_LINEAR : GL_NEAREST);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, (texmode & (1 << 6)) ? GL_CLAMP_TO_EDGE : GL_REPEAT);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, (texmode & (1 << 7)) ? GL_CLAMP_TO_EDGE : GL_REPEAT);
-        glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MIN_LOD, ti.lodmin);
-        glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_LOD, ti.lodmax);
+        glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MIN_LOD, ti.lodmin - ct.lod_first);
+        glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_LOD, ti.lodmax - ct.lod_first);
         glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_LOD_BIAS, ti.lodbias);
     }
     float tex_size_w = 256, tex_size_h = 256;
@@ -853,6 +869,7 @@ struct GpuRenderer : Renderer {
             tex_size_h = (float)(ti.hmask + 1);
         }
         DrawState ds = capture(st, tex, 0, off);
+        composite_pending_lfb(off);
         use_state(ds, GL_TRIANGLES);
         // Values at a point: start + (p - 0.5 - floor(A)) * d/dx ... (the start values belong to the
         // centre of vertex A's pixel, as the hardware iterates them).
@@ -1100,9 +1117,11 @@ struct Both : Renderer {
     Renderer *sw;
     GpuRenderer *gpu;
     std::string dir;
-    int frame = 0;
+    int frame = 0, every = 60, from = 0;
     Both(Renderer *s, GpuRenderer *g) : sw(s), gpu(g) {
         if (const char *d = getenv("ARC_DUMP_FRAMES")) dir = d;
+        if (const char *d = getenv("ARC_DUMP_EVERY")) every = std::max(1, atoi(d));
+        if (const char *d = getenv("ARC_DUMP_FROM")) from = atoi(d);
     }
     void triangle(const VoodooTriangle &t, const VoodooState &st) override {
         sw->triangle(t, st);
@@ -1127,9 +1146,13 @@ struct Both : Renderer {
     void texture_written(uint32_t o, uint32_t n) override { gpu->texture_written(o, n); }
     void clut_changed(const uint32_t *c) override { gpu->clut_changed(c); }
     void vblank(const VoodooState &st) override {
+        // The software renderer presents through GL: the GPU renderer's batch goes first, and its
+        // state is set again afterwards.
+        gpu->flush();
         sw->vblank(st);
+        gpu->have_state = false;
         frame++;
-        if (dir.empty() || frame % 60) return;
+        if (dir.empty() || frame % every || frame < from) return;
         gpu->flush();
         gpu->flush_all_lfb();
         auto it = gpu->buffers.find(st.fb.front);

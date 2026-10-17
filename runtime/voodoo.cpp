@@ -11,6 +11,7 @@
 #include "galileo.h"
 
 #include <cstring>
+#include <deque>
 
 namespace rt { volatile uint64_t swap_count; } // buffer swaps, for the frame rate
 
@@ -138,12 +139,14 @@ struct Voodoo : Device {
     void vblank_begin() {
         in_vblank = true;
         board_vblank(true);
-        vblank_count++;
-        if (swaps_pending && vblank_count > swap_interval) {
-            do_swap();
-            vblank_count = 0;
-        }
+        // As MAME: a swap synced to the retrace happens at the first vblank at least `interval`
+        // vblanks after the previous swap. What the FIFO held meanwhile runs after the new front
+        // buffer is presented, so that the host's present does not wait for that drawing too.
+        vblank_count = std::min(vblank_count + 1, 250);
+        bool swapped = retrace_wait && vblank_count >= swap_interval;
+        if (swapped) do_swap();
         renderer->vblank(state());
+        if (swapped) drain_fifo();
     }
 
     void do_swap() {
@@ -151,7 +154,28 @@ struct Voodoo : Device {
         std::swap(frontbuf, backbuf);
         generation++;
         if (swaps_pending) swaps_pending--;
+        vblank_count = 0;
+        retrace_wait = false;
         renderer->swap(state());
+    }
+
+    // ---- command FIFO ----
+    // A swap waiting for the retrace stalls the hardware's FIFO: register, LFB and texture writes
+    // after it are held until the swap has happened, while the CPU keeps running. Executing them
+    // at once would draw the next frame's clear and first triangles into the frame about to be shown.
+    struct FifoEntry {
+        uint32_t off, v;
+        int size;
+    };
+    std::deque<FifoEntry> fifo;
+    bool retrace_wait = false;
+
+    void drain_fifo() {
+        while (!retrace_wait && !fifo.empty()) {
+            FifoEntry e = fifo.front();
+            fifo.pop_front();
+            execute(e.off, e.v, e.size);
+        }
     }
 
     // ---- register access ----
@@ -216,13 +240,10 @@ struct Voodoo : Device {
             renderer->fastfill(state());
             return;
         case vSwapbufferCMD:
-            // Swaps synced to the retrace wait for (interval + 1) vblanks; others happen at once.
-            swaps_pending++;
-            if (!(v & 1)) do_swap();
-            else {
-                if (swaps_pending == 1) vblank_count = 0;
-                swap_interval = (v >> 1) & 0xFF;
-            }
+            // (counted in swaps_pending when written) Synced to the retrace, or at once.
+            swap_interval = (v >> 1) & 0xFF;
+            if (v & 1) retrace_wait = true;
+            else do_swap();
             return;
         case vFbiInit0: case vFbiInit1: case vFbiInit2: case vFbiInit3: case vFbiInit4:
             if ((chipmask & 1) && (init_enable & 1)) {
@@ -493,6 +514,15 @@ public:
     }
 
     void write(uint32_t off, uint32_t v, int size) override {
+        if (off < 0x400000 && ((off >> 2) & 0xFF) == vSwapbufferCMD) swaps_pending++;
+        if (retrace_wait || !fifo.empty()) {
+            fifo.push_back({off, v, size});
+            return;
+        }
+        execute(off, v, size);
+    }
+
+    void execute(uint32_t off, uint32_t v, int size) {
         if (off < 0x400000) {
             unsigned chipmask = (off >> 10) & 15;
             if (!chipmask) chipmask = 15;

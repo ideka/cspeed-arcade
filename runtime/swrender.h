@@ -15,7 +15,8 @@ void sw_pixel(const VoodooState &st, int buffer, int x, int y, uint32_t argb, ui
 // Draws everything into the frame buffer RAM; can dump displayed frames as PNG files.
 struct SoftwareRenderer : Renderer {
     std::string dump_dir;   // empty: no dumps
-    int dump_every = 60;    // vblanks
+    int dump_every = 60;    // vblanks (ARC_DUMP_EVERY)
+    int dump_from = 0;      // first vblank dumped (ARC_DUMP_FROM)
     int frame = 0;
     void vblank(const VoodooState &st) override;
     void triangle(const VoodooTriangle &t, const VoodooState &st) override {
