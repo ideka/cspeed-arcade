@@ -216,7 +216,7 @@ void queue_audio() {
 
 void load_settings();
 void set_fullscreen(bool on);
-extern bool setting_fullscreen;
+extern bool setting_fullscreen, setting_widescreen;
 
 bool platform_init(bool headless) {
     headless_mode = headless;
@@ -243,7 +243,9 @@ bool platform_init(bool headless) {
     // ARC_BACKGROUND (for test runs): the window opens behind the others without taking the focus.
     bool background = getenv("ARC_BACKGROUND") != nullptr;
     if (background) SDL_SetHint(SDL_HINT_WINDOW_NO_ACTIVATION_WHEN_SHOWN, "1");
-    window = SDL_CreateWindow("California Speed (arcade)", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 1024, 768,
+    load_settings();
+    window = SDL_CreateWindow("California Speed (arcade)", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+                              setting_widescreen ? 1280 : 1024, setting_widescreen ? 720 : 768,
                               SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI |
                                   (background ? SDL_WINDOW_HIDDEN : 0));
     if (!window) {
@@ -262,7 +264,6 @@ bool platform_init(bool headless) {
     if (!context || !gl_load()) return false;
     SDL_GL_SetSwapInterval(0); // the game's own timing paces the frames
     setup_present();
-    load_settings();
     if (setting_fullscreen && !background) set_fullscreen(true);
     return true;
 }
@@ -278,6 +279,7 @@ std::string settings_path() {
 }
 
 bool setting_fullscreen = false;
+bool setting_widescreen = true;
 
 void load_settings() {
     FILE *f = fopen(settings_path().c_str(), "r");
@@ -286,6 +288,7 @@ void load_settings() {
     while (fgets(line, sizeof(line), f)) {
         int v;
         if (sscanf(line, "fullscreen = %d", &v) == 1) setting_fullscreen = v != 0;
+        if (sscanf(line, "widescreen = %d", &v) == 1) setting_widescreen = v != 0;
     }
     fclose(f);
 }
@@ -294,6 +297,7 @@ void save_settings() {
     FILE *f = fopen(settings_path().c_str(), "w");
     if (!f) return;
     fprintf(f, "fullscreen = %d\n", setting_fullscreen ? 1 : 0);
+    fprintf(f, "widescreen = %d\n", setting_widescreen ? 1 : 0);
     fclose(f);
 }
 
@@ -345,6 +349,10 @@ void platform_frame() {
         case SDL_KEYDOWN:
             if (e.key.keysym.scancode == SDL_SCANCODE_F5 && !e.key.repeat) pause_requested = true;
             if (fullscreen_key(e.key)) toggle_fullscreen();
+            if (e.key.keysym.scancode == SDL_SCANCODE_F9 && !e.key.repeat) {
+                setting_widescreen = !setting_widescreen; // the game's view changes at its next camera setup
+                save_settings();
+            }
             break;
         case SDL_CONTROLLERDEVICEADDED:
             if (!pad) open_pad();
@@ -394,6 +402,9 @@ void platform_present_565(const uint16_t *pixels, int width, int height, int str
 }
 
 bool platform_quit_requested() { return quit; }
+
+bool platform_widescreen() { return setting_widescreen && !headless_mode; }
+float platform_display_aspect() { return platform_widescreen() ? 16.0f / 9 : 4.0f / 3; }
 
 void platform_window_size(int &w, int &h) {
     if (window) SDL_GL_GetDrawableSize(window, &w, &h);

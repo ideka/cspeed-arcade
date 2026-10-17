@@ -45,7 +45,8 @@ probing results are written by main.cpp.
 
 Controller: left stick steer, RT/LT (or A/B) accelerator/brake, Start, Back = coin, X/Y/RB views,
 LB radio, d-pad gears 1-4. Keyboard: arrows, Enter/1 start, 5 coin, Q/W/E views, R radio, A/S/D/F
-gears, F2 test (operator menu), 9 service, F5 pause, F11 or Alt+Enter fullscreen (remembered in
+gears, F2 test (operator menu), 9 service, F5 pause, F9 widescreen (on by default; the 3D view widens
+at the next screen), F11 or Alt+Enter fullscreen (both remembered in
 settings.ini in the SDL per-user folder, %APPDATA%/cspeed-arcade/cspeed-arcade on Windows). Three coins per credit on the default settings.
 
 ## Environment variables

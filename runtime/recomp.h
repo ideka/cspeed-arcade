@@ -204,6 +204,9 @@ void rt_trace(Ctx *c, uint32_t addr);
 // Debugging: print a guest NUL-terminated string.
 void rt_guest_message(Ctx *c, const char *what, uint32_t addr);
 
+// Widescreen (recomp.toml hook at the end of mb_setView).
+void rt_widescreen_view(Ctx *c);
+
 // Indirect calls and jumps.
 void rt_call(Ctx *c, uint32_t addr);
 void rt_jump(Ctx *c, uint32_t addr, uint32_t from);

@@ -24,3 +24,7 @@ code = 'rt_guest_message(c, "text", (uint32_t)c->r[6]);'
 at = 0x800a8168
 code = 'rt_guest_message(c, "text", (uint32_t)c->r[6]);'
 
+# mb_setView (before its return): widen the horizontal field of view for widescreen.
+[[hook]]
+at = 0x80024ac0
+code = 'rt_widescreen_view(c);'

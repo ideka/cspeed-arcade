@@ -367,6 +367,14 @@ struct ColorBuffer {
     GLuint tex = 0, fbo = 0;
     std::vector<uint32_t> lfb;  // pending raw LFB writes (RGBA8, alpha 0 = not written)
     int lfb_y0 = 1 << 30, lfb_y1 = -1;
+    // Widescreen: how much of the frame the squeezed flat (2D) triangles cover.
+    float flat_minx = 1e9f, flat_maxx = -1e9f, flat_area = 0;
+    int depth_tris = 0; // non-flat (3D) triangles in the frame
+    bool pillarbox = false; // the last frame shown from this buffer was a full-screen 2D picture
+    void reset_frame_stats() {
+        flat_minx = 1e9f, flat_maxx = -1e9f, flat_area = 0;
+        depth_tris = 0;
+    }
 };
 
 struct CachedTexture {
@@ -524,7 +532,7 @@ struct GpuRenderer : Renderer {
         glUniform1i(glGetUniformLocation(blit_program, "u_mode"), 1);
         glUniform1i(glGetUniformLocation(blit_program, "u_image"), 0);
         float top = 1.0f - 2.0f * y0 / height, h = 2.0f * rows / height;
-        glUniform4f(glGetUniformLocation(blit_program, "u_rect"), -1.0f, top, 2.0f, -h);
+        glUniform4f(glGetUniformLocation(blit_program, "u_rect"), -overlay_scale(), top, 2.0f * overlay_scale(), -h);
         glUniform4f(glGetUniformLocation(blit_program, "u_src"), 0, 0, 1, 1);
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, lfb_tex);
@@ -535,6 +543,12 @@ struct GpuRenderer : Renderer {
         b.lfb_y1 = -1;
         have_state = false;
     }
+
+    // Widescreen: the 3D view is drawn 4/3 wider and squeezed (see rt_widescreen_view) and the
+    // picture is shown at 16:9; the 2D overlays (flat triangles, LFB pixels) are squeezed to the
+    // middle here so that they keep their shape, as on a 4:3 screen.
+    float overlay_scale() const { return platform_widescreen() ? 0.75f : 1.0f; }
+    float overlay_x(float x) const { return width * 0.5f + (x - width * 0.5f) * overlay_scale(); }
 
     // Raw LFB writes are kept aside and composited in one go; drawing on top of them needs them first.
     void composite_pending_lfb(uint32_t offset) {
@@ -556,7 +570,7 @@ struct GpuRenderer : Renderer {
         use_state(ds, GL_POINTS);
         Vertex v{};
         v.smin = 1; // no texture range
-        v.x = x + 0.5f;
+        v.x = overlay_x(x + 0.5f);
         v.y = scry + 0.5f;
         v.r = (float)((argb >> 16) & 0xFF);
         v.g = (float)((argb >> 8) & 0xFF);
@@ -935,11 +949,20 @@ struct GpuRenderer : Renderer {
             float ip = std::floor(v);
             return ip + ((v - ip) > 0.5f ? 1.0f : 0.0f);
         };
+        // A flat triangle across the whole width drawn over a 3D scene is a full-screen effect (the
+        // motion blur redraws the frame through such strips): in widescreen it spans the whole width.
+        // Without 3D in the frame it is part of a 2D picture, squeezed like the other overlays.
+        bool fullscreen = false;
+        if (flat && buffer(off).depth_tris > 0) {
+            float x0 = std::min({snap(t.ax), snap(t.bx), snap(t.cx)}), x1 = std::max({snap(t.ax), snap(t.bx), snap(t.cx)});
+            fullscreen = x0 <= 1 && x1 >= width - 1;
+        }
+        if (!flat) buffer(off).depth_tris++;
         auto vertex = [&](int32_t vx16, int32_t vy16) {
             float x = snap(vx16), y = snap(vy16);
             double dx = x - 0.5 - ax, dy = y - 0.5 - ay;
             Vertex v;
-            v.x = x;
+            v.x = flat && !fullscreen ? overlay_x(x) : x;
             v.y = flip ? (st.yorigin + 1) - y : y;
             v.r = (float)((t.startr + dx * t.drdx + dy * t.drdy) / 4096.0);
             v.g = (float)((t.startg + dx * t.dgdx + dy * t.dgdy) / 4096.0);
@@ -957,6 +980,13 @@ struct GpuRenderer : Renderer {
         vertex(t.ax, t.ay);
         vertex(t.bx, t.by);
         vertex(t.cx, t.cy);
+        if (flat && !fullscreen) {
+            ColorBuffer &cb = buffer(off);
+            float x0 = snap(t.ax), y0 = snap(t.ay), x1 = snap(t.bx), y1 = snap(t.by), x2 = snap(t.cx), y2 = snap(t.cy);
+            cb.flat_minx = std::min({cb.flat_minx, x0, x1, x2});
+            cb.flat_maxx = std::max({cb.flat_maxx, x0, x1, x2});
+            cb.flat_area += std::abs((x1 - x0) * (y2 - y0) - (x2 - x0) * (y1 - y0)) * 0.5f;
+        }
         if (textured) {
             // The texels the triangle covers; used to keep filtering inside them (see texel_color)
             // when they lie within the texture, i.e. the texture is not tiled across the triangle.
@@ -1003,11 +1033,19 @@ struct GpuRenderer : Renderer {
         glColorMask(rgb, rgb, rgb, GL_FALSE);
         glDepthMask(aux ? GL_TRUE : GL_FALSE);
         glClear((rgb ? GL_COLOR_BUFFER_BIT : 0) | (aux ? GL_DEPTH_BUFFER_BIT : 0));
+
     }
 
     void swap(const VoodooState &st) override {
         flush();
         front_offset = st.fb.front;
+        // The frame just finished is in the new front buffer: decide on side bars, start counting anew.
+        if (st.fb.front != ~0u) {
+            ColorBuffer &f = buffer(st.fb.front);
+            f.pillarbox = f.flat_minx <= 1 && f.flat_maxx >= width - 1 && f.flat_area >= 0.75f * width * height;
+            f.reset_frame_stats();
+        }
+        if (st.fb.back != ~0u) buffer(st.fb.back).reset_frame_stats();
     }
 
     void clut_changed(const uint32_t *c) override {
@@ -1096,9 +1134,9 @@ struct GpuRenderer : Renderer {
         glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
         glClearColor(0, 0, 0, 1);
         glClear(GL_COLOR_BUFFER_BIT);
-        float aspect = (float)ww / wh, w = 2, h = 2;
-        if (aspect > 4.0f / 3) w = 2 * (4.0f / 3) / aspect;
-        else h = 2 * aspect / (4.0f / 3);
+        float aspect = (float)ww / wh, w = 2, h = 2, target = platform_display_aspect();
+        if (aspect > target) w = 2 * target / aspect;
+        else h = 2 * aspect / target;
         glUseProgram(blit_program);
         glUniform1i(glGetUniformLocation(blit_program, "u_mode"), 0);
         glUniform1i(glGetUniformLocation(blit_program, "u_image"), 0);
@@ -1111,6 +1149,19 @@ struct GpuRenderer : Renderer {
         glBindTexture(GL_TEXTURE_2D, it->second.tex);
         glBindVertexArray(blit_vao);
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+        // Widescreen: a full-screen 2D picture (menus made of pieces) is squeezed to the middle and does not hide
+        // what is behind it any more (the game does not clear under it): black bars at the sides.
+        const ColorBuffer &cb = it->second;
+        if (platform_widescreen() && cb.pillarbox) {
+            int pw = (int)std::lround(w / 2 * ww), px0 = (ww - pw) / 2, bar = (int)std::lround(pw * (1 - overlay_scale()) / 2);
+            glEnable(GL_SCISSOR_TEST);
+            glClearColor(0, 0, 0, 1);
+            glScissor(px0, 0, bar, wh);
+            glClear(GL_COLOR_BUFFER_BIT);
+            glScissor(px0 + pw - bar, 0, bar, wh);
+            glClear(GL_COLOR_BUFFER_BIT);
+            glDisable(GL_SCISSOR_TEST);
+        }
         platform_swap();
         have_state = false;
     }

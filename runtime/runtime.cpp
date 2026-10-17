@@ -1,5 +1,6 @@
 // Core runtime: guest memory, the hardware register dispatcher, COP0/COP1 helpers and indirect calls.
 #include "runtime.h"
+#include "platform.h"
 
 #include <algorithm>
 #include <chrono>
@@ -355,6 +356,24 @@ extern "C" void rt_jump(Ctx *c, uint32_t addr, uint32_t from) {
 }
 
 void rt::call(Ctx *c, uint32_t addr) { rt_call(c, addr); }
+
+// mb_setView computes the projection from the horizontal half-angle tangent and the screen size
+// (globals at 0x806DD538: tan x, tan y, x clip normalisation, y clip normalisation, ..., focal x,
+// focal y, centre x, centre y). For widescreen the horizontal tangent is 4/3 larger: the game draws
+// and keeps a wider view squeezed into its 512 pixels, which is shown at 16:9. Vertical stays.
+extern "C" void rt_widescreen_view(Ctx *) {
+    if (!rt::platform_widescreen()) return;
+    auto getf = [](uint32_t a) { uint32_t v = rd32(a); float f; memcpy(&f, &v, 4); return f; };
+    auto setf = [](uint32_t a, float f) { uint32_t v; memcpy(&v, &f, 4); wr32(a, v); };
+    const uint32_t TANX = 0x806DD538u, CLIPX = 0x806DD540u, FOCALX = 0x806DD550u;
+    float tanx = getf(TANX), focal = getf(FOCALX);
+    if (!(tanx > 0) || !(focal > 0)) return;
+    float width = focal * 2 * tanx;
+    tanx *= 4.0f / 3;
+    setf(TANX, tanx);
+    setf(CLIPX, 1 / (tanx * tanx + 1));
+    setf(FOCALX, width / (2 * tanx));
+}
 
 extern "C" void rt_guest_message(Ctx *c, const char *what, uint32_t addr) {
     char buf[512];

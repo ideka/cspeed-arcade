@@ -12,6 +12,9 @@ void platform_present_565(const uint16_t *pixels, int width, int height, int str
 bool platform_quit_requested();
 void platform_window_size(int &w, int &h); // drawable size in pixels
 void platform_swap();
+// Widescreen (F9, in settings.ini): the game draws a 4/3 wider view, shown at 16:9 (see gpurender).
+bool platform_widescreen();
+float platform_display_aspect(); // 4:3 or 16:9
 
 // Current input state, in the cabinet's terms.
 struct Controls {
