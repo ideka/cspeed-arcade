@@ -32,14 +32,17 @@ layout(location = 0) in vec2 a_pos;   // pixels, buffer rows from the top
 layout(location = 1) in vec4 a_rgba;  // iterated colour, 8-bit units with fraction
 layout(location = 2) in vec2 a_zw;    // Z (16-bit units), FBI W
 layout(location = 3) in vec3 a_stw;   // TMU S, T, W
+layout(location = 4) in vec4 a_strect; // the triangle's S, T range in texels (min, max), or min > max: none
 uniform vec3 u_size;                  // buffer size in pixels, point size
 noperspective out vec4 v_rgba;
 noperspective out vec2 v_zw;
 noperspective out vec3 v_stw;
+flat out vec4 v_strect;
 void main() {
     v_rgba = a_rgba;
     v_zw = a_zw;
     v_stw = a_stw;
+    v_strect = a_strect;
     gl_Position = vec4(a_pos.x / u_size.x * 2.0 - 1.0, 1.0 - a_pos.y / u_size.y * 2.0, 0.0, 1.0);
     gl_PointSize = u_size.z;
 }
@@ -49,6 +52,7 @@ const char *FRAGMENT_SHADER = R"(#version 330 core
 noperspective in vec4 v_rgba;
 noperspective in vec2 v_zw;
 noperspective in vec3 v_stw;
+flat in vec4 v_strect;
 layout(location = 0, index = 0) out vec4 o_color;
 layout(location = 0, index = 1) out vec4 o_prefog;
 
@@ -126,13 +130,55 @@ ivec4 combine_texture(uint tm, ivec4 local, ivec4 other) {
     return o;
 }
 
+bool keyed(ivec4 c) { return (uint(c.y << 16 | c.z << 8 | c.w) ^ (u_chromakey & 0xffffffu)) == 0u; }
+
+// Bilinear magnification of a chroma-keyed texture, keying each texel before filtering: the
+// hardware samples at pixel centres, where texels blend little, but at a higher resolution
+// blends of keyed and opaque texels would no longer match the key and show as dark fringes.
+ivec4 keyed_bilinear(vec2 st) {
+    ivec2 size = textureSize(u_tex, 0);
+    vec2 p = st / u_texsize * vec2(size) - 0.5;
+    ivec2 i0 = ivec2(floor(p));
+    vec2 f = p - floor(p);
+    vec4 acc = vec4(0.0);
+    float wsum = 0.0;
+    ivec4 key = ivec4(0);
+    for (int k = 0; k < 4; k++) {
+        ivec2 o = ivec2(k & 1, k >> 1);
+        ivec2 c = i0 + o;
+        c.x = (u_texmode & (1u << 6)) != 0u ? clamp(c.x, 0, size.x - 1) : ((c.x % size.x) + size.x) % size.x;
+        c.y = (u_texmode & (1u << 7)) != 0u ? clamp(c.y, 0, size.y - 1) : ((c.y % size.y) + size.y) % size.y;
+        ivec4 comb = combine_texture(u_texmode, ivec4(round(texelFetch(u_tex, c, 0).argb * 255.0)), ivec4(0));
+        float w = (o.x == 1 ? f.x : 1.0 - f.x) * (o.y == 1 ? f.y : 1.0 - f.y);
+        if (keyed(comb)) { key = comb; continue; }
+        acc += vec4(comb) * w;
+        wsum += w;
+    }
+    return wsum > 0.0 ? ivec4(round(acc / wsum)) : key;
+}
+
 ivec4 texel_color() {
     vec3 stw = v_stw;
     vec2 st;
     if ((u_texmode & 1u) != 0u) st = stw.xy / stw.z;
     else st = stw.xy;
     if ((u_texmode & (1u << 3)) != 0u && stw.z < 0.0) st = vec2(0.0);
-    vec4 t = texture(u_tex, st / u_texsize);
+    // At the internal resolution, pixels at a triangle's edges sample closer to the edge than the
+    // hardware's pixel centres do, and filtering would reach texels outside the triangle's part of
+    // the texture (the next image in an atlas, or the far side through wrapping): keep the
+    // coordinates within the texels the native pixels sample, half a native pixel inside the edges.
+    vec2 dx = dFdx(st), dy = dFdy(st);
+    if (v_strect.x <= v_strect.z) {
+        vec2 inset = 0.5 * u_scale * (abs(dx) + abs(dy));
+        vec2 lo = v_strect.xy + inset, hi = v_strect.zw - inset, mid = 0.5 * (v_strect.xy + v_strect.zw);
+        st = mix(clamp(st, lo, hi), mid, vec2(greaterThan(lo, hi)));
+    }
+    // Chroma key on the texture colour, bilinear magnification: key before filtering.
+    vec2 texels = vec2(textureSize(u_tex, 0)) / u_texsize; // GL level 0 texels per LOD 0 texel
+    float rho = max(length(dx * texels), length(dy * texels));
+    if ((u_fbzmode & (1u << 1)) != 0u && bf(u_fbzcp, 0, 2) == 1u && (u_texmode & (1u << 2)) != 0u && rho <= 1.0)
+        return keyed_bilinear(st);
+    vec4 t = textureGrad(u_tex, st / u_texsize, dx / u_texsize, dy / u_texsize);
     ivec4 local = ivec4(round(t.argb * 255.0)); // (a, r, g, b)
     return combine_texture(u_texmode, local, ivec4(0));
 }
@@ -303,6 +349,7 @@ struct Vertex {
     float r, g, b, a;
     float z, w;
     float s, t, tw;
+    float smin, tmin, smax, tmax; // texture range of the triangle (smin > smax: none)
 };
 
 // Per-draw state that the shader or GL state depends on.
@@ -368,6 +415,8 @@ struct GpuRenderer : Renderer {
         glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void *)offsetof(Vertex, z));
         glEnableVertexAttribArray(3);
         glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void *)offsetof(Vertex, s));
+        glEnableVertexAttribArray(4);
+        glVertexAttribPointer(4, 4, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void *)offsetof(Vertex, smin));
         glGenVertexArrays(1, &blit_vao);
         glGenTextures(1, &lfb_tex);
         glGenTextures(1, &lut_tex);
@@ -506,6 +555,7 @@ struct GpuRenderer : Renderer {
         composite_pending_lfb(off);
         use_state(ds, GL_POINTS);
         Vertex v{};
+        v.smin = 1; // no texture range
         v.x = x + 0.5f;
         v.y = scry + 0.5f;
         v.r = (float)((argb >> 16) & 0xFF);
@@ -875,8 +925,18 @@ struct GpuRenderer : Renderer {
         // centre of vertex A's pixel, as the hardware iterates them).
         float ax = (float)(t.ax >> 4), ay = (float)(t.ay >> 4);
         bool flip = fz & (1 << 17);
+        // Flat (constant W) triangles are the 2D overlays: their vertices are snapped to the native
+        // pixel grid as the hardware's coverage rule rounds them, so that pieces placed side by side
+        // cover whole pixels as they do at the native resolution (no gaps, no half-covered columns).
+        bool flat = t.dwdx == 0 && t.dwdy == 0 && t.dw0dx == 0 && t.dw0dy == 0;
+        auto snap = [&](int32_t v16) {
+            float v = v16 / 16.0f;
+            if (!flat) return v;
+            float ip = std::floor(v);
+            return ip + ((v - ip) > 0.5f ? 1.0f : 0.0f);
+        };
         auto vertex = [&](int32_t vx16, int32_t vy16) {
-            float x = vx16 / 16.0f, y = vy16 / 16.0f;
+            float x = snap(vx16), y = snap(vy16);
             double dx = x - 0.5 - ax, dy = y - 0.5 - ay;
             Vertex v;
             v.x = x;
@@ -890,11 +950,29 @@ struct GpuRenderer : Renderer {
             v.s = (float)(((double)t.starts + dx * (double)t.dsdx + dy * (double)t.dsdy) / 4294967296.0);
             v.t = (float)(((double)t.startt + dx * (double)t.dtdx + dy * (double)t.dtdy) / 4294967296.0);
             v.tw = (float)(((double)t.startw0 + dx * (double)t.dw0dx + dy * (double)t.dw0dy) / 4294967296.0);
+            v.smin = 1;
+            v.smax = 0;
             batch.push_back(v);
         };
         vertex(t.ax, t.ay);
         vertex(t.bx, t.by);
         vertex(t.cx, t.cy);
+        if (textured) {
+            // The texels the triangle covers; used to keep filtering inside them (see texel_color)
+            // when they lie within the texture, i.e. the texture is not tiled across the triangle.
+            Vertex *v = &batch[batch.size() - 3];
+            bool persp = st.tmu[vTextureMode] & 1;
+            float smin = 1e30f, tmin = 1e30f, smax = -1e30f, tmax = -1e30f;
+            bool ok = true;
+            for (int i = 0; i < 3; i++) {
+                if (persp && v[i].tw <= 0) ok = false;
+                float s = persp && v[i].tw > 0 ? v[i].s / v[i].tw : v[i].s, tt = persp && v[i].tw > 0 ? v[i].t / v[i].tw : v[i].t;
+                smin = std::min(smin, s), smax = std::max(smax, s), tmin = std::min(tmin, tt), tmax = std::max(tmax, tt);
+            }
+            const float e = 0.01f;
+            if (ok && smin >= -e && tmin >= -e && smax <= tex_size_w + e && tmax <= tex_size_h + e)
+                for (int i = 0; i < 3; i++) v[i].smin = smin, v[i].tmin = tmin, v[i].smax = smax, v[i].tmax = tmax;
+        }
     }
 
     void fastfill(const VoodooState &st) override {

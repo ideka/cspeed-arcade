@@ -55,6 +55,15 @@ void add_device(Device *d) { devices.push_back(d); }
 
 void update_devices() {
     uint64_t now = now_ns();
+    static double ramdump_at = getenv("ARC_RAMDUMP") ? atof(getenv("ARC_RAMDUMP")) : -1;
+    if (ramdump_at >= 0 && now / 1e9 >= ramdump_at) { // debugging: guest RAM to ram.bin, once
+        ramdump_at = -1;
+        if (FILE *f = fopen("ram.bin", "wb")) {
+            fwrite(rt_ram, 1, RAM_SIZE, f);
+            fclose(f);
+        }
+        log("RAM dumped to ram.bin");
+    }
     for (Device *d : devices) d->update(now);
 }
 
@@ -344,7 +353,35 @@ extern "C" void rt_guest_message(Ctx *c, const char *what, uint32_t addr) {
 
 // ---- call tracing ----
 
-int rt_trace_on = getenv("ARC_CALLTRACE") != nullptr;
+int rt_trace_on = getenv("ARC_CALLTRACE") != nullptr || getenv("ARC_CALLCOUNT") != nullptr || getenv("ARC_CALLLOG") != nullptr;
+
+// ARC_CALLCOUNT=addr,addr,...: calls to these guest functions, reported every 10 seconds.
+namespace {
+struct CallCounter {
+    std::vector<std::pair<uint32_t, uint64_t>> counts;
+    uint64_t next_report = 10000000000ull;
+    CallCounter() {
+        if (const char *s = getenv("ARC_CALLCOUNT"))
+            for (const char *p = s; *p;) {
+                counts.push_back({(uint32_t)strtoul(p, nullptr, 16), 0});
+                p = strchr(p, ',');
+                if (!p) break;
+                p++;
+            }
+    }
+    void hit(uint32_t addr) {
+        for (auto &[a, n] : counts)
+            if (a == addr) n++;
+        uint64_t now = rt::now_ns();
+        if (!counts.empty() && now >= next_report) {
+            next_report = now + 10000000000ull;
+            std::string line;
+            for (auto &[a, n] : counts) line += " " + std::string(rt::func_name(a)) + "=" + std::to_string(n);
+            rt::log("calls at %.0f s:%s", now / 1e9, line.c_str());
+        }
+    }
+} call_counter;
+} // namespace
 static struct {
     uint32_t func, ra, a0, a1;
 } trace_ring[65536];
@@ -353,6 +390,30 @@ static unsigned trace_pos;
 namespace rt { extern int depth; }
 
 extern "C" void rt_trace(Ctx *c, uint32_t addr) {
+    call_counter.hit(addr);
+    // ARC_CALLLOG=addr: every call of that guest function, with its caller and first arguments.
+    static std::vector<uint32_t> log_addrs = [] {
+        std::vector<uint32_t> v;
+        if (const char *s = getenv("ARC_CALLLOG"))
+            for (const char *p = s; p && *p; p = strchr(p, ',') ? strchr(p, ',') + 1 : nullptr) v.push_back((uint32_t)strtoul(p, nullptr, 16));
+        return v;
+    }();
+    auto guest_str = [](uint32_t p) {
+        std::string out;
+        if ((p & 0xE0000000u) != 0x80000000u) return out;
+        for (int i = 0; i < 48; i++) {
+            uint8_t ch = rd8(p + i);
+            if (!ch) break;
+            if (ch < 32 || ch > 126) return std::string();
+            out += (char)ch;
+        }
+        return out;
+    };
+    if (!log_addrs.empty() && std::find(log_addrs.begin(), log_addrs.end(), addr) != log_addrs.end() && getenv("ARC_CALLLOG_STR"))
+        rt::log("  strings a0 '%s' a1 '%s' a2 '%s'", guest_str((uint32_t)c->r[4]).c_str(), guest_str((uint32_t)c->r[5]).c_str(), guest_str((uint32_t)c->r[6]).c_str());
+    if (!log_addrs.empty() && std::find(log_addrs.begin(), log_addrs.end(), addr) != log_addrs.end())
+        rt::log("call %08x %s from %08x (%s) a0 %08x a1 %08x at %.3f s [a0+156] %08x", addr, rt::func_name(addr), (uint32_t)c->r[31], rt::func_name((uint32_t)c->r[31]),
+                (uint32_t)c->r[4], (uint32_t)c->r[5], rt::now_ns() / 1e9, ((uint32_t)c->r[4] & 0xE0000000u) == 0x80000000u ? rd32((uint32_t)c->r[4] + 156) : 0);
     trace_ring[trace_pos++ & 65535] = {addr, (uint32_t)c->r[31], (uint32_t)c->r[4], (uint32_t)c->r[5]};
 }
 
