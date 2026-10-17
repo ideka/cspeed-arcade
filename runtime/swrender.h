@@ -7,6 +7,7 @@
 namespace rt {
 
 extern volatile int sw_counts[4];
+extern volatile uint64_t sw_render_ns;
 void sw_triangle(const VoodooTriangle &t, const VoodooState &st);
 void sw_fastfill(const VoodooState &st);
 void sw_pixel(const VoodooState &st, int buffer, int x, int y, uint32_t argb, uint16_t z);
@@ -17,8 +18,18 @@ struct SoftwareRenderer : Renderer {
     int dump_every = 60;    // vblanks
     int frame = 0;
     void vblank(const VoodooState &st) override;
-    void triangle(const VoodooTriangle &t, const VoodooState &st) override { sw_counts[0]++; sw_triangle(t, st); sw_counts[1]++; }
-    void fastfill(const VoodooState &st) override { sw_counts[2]++; sw_fastfill(st); sw_counts[3]++; }
+    void triangle(const VoodooTriangle &t, const VoodooState &st) override {
+        uint64_t t0 = now_ns();
+        sw_triangle(t, st);
+        sw_counts[1]++;
+        sw_render_ns += now_ns() - t0;
+    }
+    void fastfill(const VoodooState &st) override {
+        uint64_t t0 = now_ns();
+        sw_fastfill(st);
+        sw_counts[3]++;
+        sw_render_ns += now_ns() - t0;
+    }
     void swap(const VoodooState &st) override;
     void lfb_pipeline_write(const VoodooState &st, int buffer, int x, int y, uint32_t argb, uint16_t z) override { sw_pixel(st, buffer, x, y, argb, z); }
 };

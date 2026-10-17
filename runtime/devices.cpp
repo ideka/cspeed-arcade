@@ -6,7 +6,11 @@
 #include "board.h"
 #include "dcs.h"
 #include "galileo.h"
+#include "gpurender.h"
 #include "swrender.h"
+
+#include <algorithm>
+#include <cstring>
 
 #include <cstdlib>
 
@@ -47,9 +51,13 @@ void devices_init(const char *data_dir) {
     rt::board_init(std::string(data_dir) + "/cmos.bin");
     rt::pci_add(new rt::PciDevice(9, 0x0002100B, 0x01018F01)); // NS 87415 IDE
     rt::add_device(new SoundFifo());
+    // ARC_RENDERER=sw: the software rasterizer (also used headless); otherwise the GPU, at ARC_SCALE.
     static rt::SoftwareRenderer sw;
     if (const char *d = getenv("ARC_DUMP_FRAMES")) sw.dump_dir = d;
-    rt::voodoo_init(&sw);
+    const char *r = getenv("ARC_RENDERER");
+    bool software = getenv("ARC_HEADLESS") || (r && !strcmp(r, "sw"));
+    int scale = getenv("ARC_SCALE") ? atoi(getenv("ARC_SCALE")) : 3;
+    rt::voodoo_init(software ? &sw : rt::gpu_renderer_create(std::clamp(scale, 1, 8), &sw));
     if (!rt::ide_init(std::string(data_dir) + "/calspeed.chd", std::string(data_dir) + "/hdd_writes.bin"))
         rt::fatal("the hard disk image (calspeed.chd) is required");
 }

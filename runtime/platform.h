@@ -10,6 +10,8 @@ void platform_frame();
 // Shows a 16-bit 5-6-5 image (the software renderer's front buffer).
 void platform_present_565(const uint16_t *pixels, int width, int height, int stride);
 bool platform_quit_requested();
+void platform_window_size(int &w, int &h); // drawable size in pixels
+void platform_swap();
 
 // Current input state, in the cabinet's terms.
 struct Controls {

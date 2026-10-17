@@ -58,6 +58,7 @@ struct Renderer {
     virtual void triangle(const VoodooTriangle &, const VoodooState &) {}
     virtual void fastfill(const VoodooState &) {}
     virtual void swap(const VoodooState &) {} // st.fb.front is now the displayed buffer
+    // A raw LFB write (no pixel pipeline) to the colour buffer at frame buffer RAM offset `buffer`.
     virtual void lfb_write(int buffer, int x, int y, uint32_t argb, bool rgb, bool depth, uint16_t z, uint32_t lfb_mode) {}
     // An LFB write with lfbMode's pixel pipeline enabled: run it through the pipeline at (x, y) into
     // buffer (0 front, 1 back, as lfbMode selects).

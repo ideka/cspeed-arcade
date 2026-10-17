@@ -683,6 +683,7 @@ void sw_triangle(const VoodooTriangle &t, const VoodooState &st) {
 
 // One pixel through the pipeline (LFB write with the pixel pipeline enabled): no colour combine.
 volatile int sw_counts[4];
+volatile uint64_t sw_render_ns;
 
 void sw_pixel(const VoodooState &st, int buffer, int x, int y, uint32_t argb, uint16_t z) {
     static Pipeline *cached;
@@ -832,7 +833,7 @@ void SoftwareRenderer::vblank(const VoodooState &st) {
     frame++;
     if (st.fb.front == ~0u || !st.fb.rowpixels) return;
     uint32_t dims = st.fbi[vVideoDimensions];
-    int w = (int)(dims & 0x3FF), h = (int)((dims >> 16) & 0x3FF);
+    int w = (int)(dims & 0x3FF) + 1, h = (int)((dims >> 16) & 0x3FF); // width field: width - 1
     if (w <= 0 || h <= 0 || w > (int)st.fb.rowpixels) { w = (int)st.fb.rowpixels; h = st.yorigin + 1; }
     if (st.fb.front + (size_t)h * st.fb.rowpixels * 2 <= (2u << 20))
         platform_present_565((const uint16_t *)(st.fb.ram + st.fb.front), w, h, (int)st.fb.rowpixels);

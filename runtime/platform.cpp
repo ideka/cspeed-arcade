@@ -283,6 +283,15 @@ void platform_present_565(const uint16_t *pixels, int width, int height, int str
 }
 
 bool platform_quit_requested() { return quit; }
+
+void platform_window_size(int &w, int &h) {
+    if (window) SDL_GL_GetDrawableSize(window, &w, &h);
+    else w = h = 1;
+}
+
+void platform_swap() {
+    if (window) SDL_GL_SwapWindow(window);
+}
 const Controls &platform_controls() { return controls; }
 
 } // namespace rt

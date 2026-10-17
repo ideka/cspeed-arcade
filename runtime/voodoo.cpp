@@ -318,7 +318,8 @@ struct Voodoo : Device {
                 *p = z;
             }
         }
-        if (buffer <= 1) renderer->lfb_write(buffer == 0 ? frontbuf : backbuf, x, scry, argb, rgb, depth, z, mode);
+        if (buffer <= 1 && color_buffer(buffer) != ~0u)
+            renderer->lfb_write((int)color_buffer(buffer), x, scry, argb, rgb, depth, z, mode);
     }
 
     static uint32_t expand(uint32_t v, int bits) { return bits == 5 ? (v << 3 | v >> 2) : bits == 6 ? (v << 2 | v >> 4) : v; }

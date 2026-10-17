@@ -11,8 +11,8 @@
     X(PFNGLGETPROGRAMIVPROC, glGetProgramiv) X(PFNGLGETPROGRAMINFOLOGPROC, glGetProgramInfoLog)          \
     X(PFNGLUSEPROGRAMPROC, glUseProgram) X(PFNGLDELETESHADERPROC, glDeleteShader)                        \
     X(PFNGLGETUNIFORMLOCATIONPROC, glGetUniformLocation) X(PFNGLUNIFORM1IPROC, glUniform1i)              \
-    X(PFNGLUNIFORM1FPROC, glUniform1f) X(PFNGLUNIFORM2FPROC, glUniform2f) X(PFNGLUNIFORM4FPROC, glUniform4f) \
-    X(PFNGLUNIFORM1UIPROC, glUniform1ui) X(PFNGLUNIFORM1UIVPROC, glUniform1uiv)                          \
+    X(PFNGLUNIFORM1FPROC, glUniform1f) X(PFNGLUNIFORM2FPROC, glUniform2f) X(PFNGLUNIFORM3FPROC, glUniform3f) X(PFNGLUNIFORM4FPROC, glUniform4f) \
+    X(PFNGLUNIFORM1UIPROC, glUniform1ui) X(PFNGLUNIFORM1IVPROC, glUniform1iv) X(PFNGLBLENDFUNCSEPARATEPROC, glBlendFuncSeparate) X(PFNGLUNIFORM1UIVPROC, glUniform1uiv)                          \
     X(PFNGLUNIFORM4UIVPROC, glUniform4uiv) X(PFNGLUNIFORM1FVPROC, glUniform1fv)                          \
     X(PFNGLGENVERTEXARRAYSPROC, glGenVertexArrays) X(PFNGLBINDVERTEXARRAYPROC, glBindVertexArray)        \
     X(PFNGLGENBUFFERSPROC, glGenBuffers) X(PFNGLBINDBUFFERPROC, glBindBuffer)                            \
