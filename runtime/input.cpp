@@ -75,6 +75,23 @@ void widget_output(uint32_t data) {
     if (!(data & (1 << 10)) && output_mode == 4) wheel_force = (int8_t)~arg; // wheel motor
 }
 
-void vblank() { platform_frame(); }
+// Enhancement: no time limit on the selection screens (track, mode, car, transmission: game states
+// 4-10 at 0x80701D80). Their countdown (frames, at 0x80701D84) is held at 5 seconds left; each
+// screen subtracts the elapsed frames itself and picks for the player below 3.
+// ARC_SELECT_TIMER=1 keeps the original countdown.
+void hold_select_timer() {
+    static bool original = getenv("ARC_SELECT_TIMER") != nullptr;
+    if (original) return;
+    uint32_t state = rd32(0x80701D80u);
+    if (state < 4 || state > 10) return;
+    const int32_t hold = 5 * 57; // below the times the screens start taking input (track 840, car 570, transmission 390)
+    int32_t timer = (int32_t)rd32(0x80701D84u);
+    if (timer > 0 && timer < hold) wr32(0x80701D84u, (uint32_t)hold);
+}
+
+void vblank() {
+    hold_select_timer();
+    platform_frame();
+}
 
 } // namespace rt

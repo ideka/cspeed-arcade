@@ -48,6 +48,9 @@ SDL_GLContext context;
 SDL_AudioDeviceID audio;
 SDL_GameController *pad;
 bool quit;
+// F5: pause until pressed again. The emulated clock stops (see now_ns) and the sound goes quiet.
+bool pause_requested = false;
+uint64_t pause_until = 0; // scripted pause (ARC_INPUT "<time>:pause:<seconds>"): host time to resume
 Controls controls;
 bool headless_mode;
 
@@ -149,6 +152,7 @@ void read_controls() {
 struct ScriptEvent {
     double at, duration;
     std::string control;
+    bool done = false;
 };
 std::vector<ScriptEvent> script;
 
@@ -175,7 +179,7 @@ void load_script() {
 
 void apply_script(Controls &c) {
     double t = now_ns() / 1e9;
-    for (const ScriptEvent &e : script) {
+    for (ScriptEvent &e : script) {
         if (t < e.at || t >= e.at + e.duration) continue;
         const std::string &n = e.control;
         if (n == "coin") c.coin = true;
@@ -189,6 +193,11 @@ void apply_script(Controls &c) {
         else if (n == "view2") c.view2 = true;
         else if (n == "view3") c.view3 = true;
         else if (n == "radio") c.radio = true;
+        else if (n == "pause" && !e.done) {
+            e.done = true;
+            pause_requested = true;
+            pause_until = host_ns() + (uint64_t)(e.duration * 1e9);
+        }
         else if (n.size() == 5 && n.rfind("gear", 0) == 0) c.gear = n[4] - '0';
     }
 }
@@ -251,11 +260,35 @@ bool platform_init(bool headless) {
     return true;
 }
 
+
+void run_paused() {
+    if (audio) {
+        SDL_PauseAudioDevice(audio, 1);
+        SDL_ClearQueuedAudio(audio);
+    }
+    if (window) SDL_SetWindowTitle(window, "California Speed (arcade) (paused)");
+    uint64_t start = host_ns();
+    while (!quit) {
+        SDL_Event e;
+        if (pause_until && host_ns() >= pause_until) break;
+        if (!SDL_WaitEventTimeout(&e, 100)) continue;
+        if (e.type == SDL_QUIT) quit = true;
+        if (e.type == SDL_KEYDOWN && e.key.keysym.scancode == SDL_SCANCODE_F5 && !e.key.repeat) break;
+    }
+    pause_until = 0;
+    add_paused_ns(host_ns() - start);
+    if (window) SDL_SetWindowTitle(window, "California Speed (arcade)");
+    if (audio) SDL_PauseAudioDevice(audio, 0);
+}
+
 void platform_frame() {
     SDL_Event e;
     while (SDL_PollEvent(&e)) {
         switch (e.type) {
         case SDL_QUIT: quit = true; break;
+        case SDL_KEYDOWN:
+            if (e.key.keysym.scancode == SDL_SCANCODE_F5 && !e.key.repeat) pause_requested = true;
+            break;
         case SDL_CONTROLLERDEVICEADDED:
             if (!pad) open_pad();
             break;
@@ -267,6 +300,10 @@ void platform_frame() {
             }
             break;
         }
+    }
+    if (pause_requested) {
+        pause_requested = false;
+        run_paused();
     }
     read_controls();
     queue_audio();

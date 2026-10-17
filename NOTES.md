@@ -45,7 +45,7 @@ probing results are written by main.cpp.
 
 Controller: left stick steer, RT/LT (or A/B) accelerator/brake, Start, Back = coin, X/Y/RB views,
 LB radio, d-pad gears 1-4. Keyboard: arrows, Enter/1 start, 5 coin, Q/W/E views, R radio, A/S/D/F
-gears, F2 test (operator menu), 9 service. Three coins per credit on the default settings.
+gears, F2 test (operator menu), 9 service, F5 pause. Three coins per credit on the default settings.
 
 ## Environment variables
 
@@ -53,7 +53,9 @@ ARC_SCALE (GPU internal resolution, default 3), ARC_RENDERER=sw|both, ARC_HEADLE
 (window opens behind others without the focus, for test runs), ARC_INPUT (scripted input),
 ARC_DUMP_FRAMES (with ARC_DUMP_EVERY=<vblanks>, ARC_DUMP_FROM=<vblank>), ARC_DUMP_GPU (GPU frames at
 the internal resolution, same timing settings), ARC_DUMP_AUDIO, ARC_WATCH,
-ARC_CALLTRACE, ARC_TRACE_MMIO[=device].
+ARC_CALLTRACE, ARC_TRACE_MMIO[=device], ARC_SELECT_TIMER=1 (keep the selection screens' time limit, which
+is otherwise held at 5 seconds left). Debugging: ARC_CALLCOUNT/ARC_CALLLOG=addr,... (guest calls),
+ARC_PEEK=addr (a RAM word as it changes), ARC_RAMDUMP=<seconds>.
 Sound debugging: ARC_DCS_LOG=file (host->DSP words, stamped with host and audio time), ARC_DUMP_FIFO,
 ARC_DSP_DUMP=<seconds> (program/data memory dumps and a 1 s PC profile), ARC_DSP_TRACE=file (registers
 at each instruction of the first effect frame, in the format of a MAME debugger trace with

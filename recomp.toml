@@ -23,3 +23,4 @@ code = 'rt_guest_message(c, "text", (uint32_t)c->r[6]);'
 [[hook]]
 at = 0x800a8168
 code = 'rt_guest_message(c, "text", (uint32_t)c->r[6]);'
+

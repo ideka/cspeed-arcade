@@ -32,7 +32,9 @@ void set_boot_rom(std::vector<uint8_t> data);
 
 void log(const char *fmt, ...);
 [[noreturn]] void fatal(const char *fmt, ...);
-uint64_t now_ns();
+uint64_t now_ns();       // emulated time: host time without the time spent paused
+void add_paused_ns(uint64_t ns);
+uint64_t host_ns();
 const char *func_name(uint32_t addr);
 void print_native_stack();
 void dump_trace(int n);

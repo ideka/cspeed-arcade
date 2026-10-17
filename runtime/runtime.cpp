@@ -47,14 +47,32 @@ void log(const char *fmt, ...) {
     exit(1);
 }
 
-uint64_t now_ns() {
+static uint64_t paused_ns;
+
+uint64_t host_ns() {
     return (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start_time).count();
 }
+
+uint64_t now_ns() { return host_ns() - paused_ns; }
+
+void add_paused_ns(uint64_t ns) { paused_ns += ns; }
 
 void add_device(Device *d) { devices.push_back(d); }
 
 void update_devices() {
     uint64_t now = now_ns();
+    // ARC_PEEK=addr (debugging): log a guest RAM word whenever it changes, at most every 0.2 s.
+    static uint32_t peek = getenv("ARC_PEEK") ? (uint32_t)strtoul(getenv("ARC_PEEK"), nullptr, 16) : 0;
+    if (peek) {
+        static uint32_t last = ~0u;
+        static uint64_t next = 0;
+        if (now >= next) {
+            uint32_t v = rd32(peek);
+            if (v != last) log("peek %08x = %08x (%d) at %.2f s", peek, v, (int)v, now / 1e9);
+            last = v;
+            next = now + 200000000;
+        }
+    }
     static double ramdump_at = getenv("ARC_RAMDUMP") ? atof(getenv("ARC_RAMDUMP")) : -1;
     if (ramdump_at >= 0 && now / 1e9 >= ramdump_at) { // debugging: guest RAM to ram.bin, once
         ramdump_at = -1;
