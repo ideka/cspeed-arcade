@@ -130,7 +130,8 @@ void read_controls() {
     c.brake = std::max(axis(SDL_CONTROLLER_AXIS_TRIGGERLEFT), button(SDL_CONTROLLER_BUTTON_B) ? 1.0f : 0.0f);
     if (k[SDL_SCANCODE_UP]) c.accel = 1;
     if (k[SDL_SCANCODE_DOWN]) c.brake = 1;
-    c.start = button(SDL_CONTROLLER_BUTTON_START) || k[SDL_SCANCODE_RETURN] || k[SDL_SCANCODE_1];
+    bool alt = k[SDL_SCANCODE_LALT] || k[SDL_SCANCODE_RALT]; // Alt+Enter is fullscreen, not Start
+    c.start = button(SDL_CONTROLLER_BUTTON_START) || (k[SDL_SCANCODE_RETURN] && !alt) || k[SDL_SCANCODE_1];
     c.coin = button(SDL_CONTROLLER_BUTTON_BACK) || k[SDL_SCANCODE_5];
     c.test = k[SDL_SCANCODE_F2];
     c.service = k[SDL_SCANCODE_9];
@@ -213,6 +214,10 @@ void queue_audio() {
 
 } // namespace
 
+void load_settings();
+void set_fullscreen(bool on);
+extern bool setting_fullscreen;
+
 bool platform_init(bool headless) {
     headless_mode = headless;
     if (SDL_Init(SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER | (headless ? 0 : SDL_INIT_VIDEO)) != 0) {
@@ -257,9 +262,59 @@ bool platform_init(bool headless) {
     if (!context || !gl_load()) return false;
     SDL_GL_SetSwapInterval(0); // the game's own timing paces the frames
     setup_present();
+    load_settings();
+    if (setting_fullscreen && !background) set_fullscreen(true);
     return true;
 }
 
+
+// ---- preferences (settings.ini in SDL's per-user folder) ----
+
+std::string settings_path() {
+    char *dir = SDL_GetPrefPath("cspeed-arcade", "cspeed-arcade");
+    std::string p = dir ? std::string(dir) + "settings.ini" : "settings.ini";
+    SDL_free(dir);
+    return p;
+}
+
+bool setting_fullscreen = false;
+
+void load_settings() {
+    FILE *f = fopen(settings_path().c_str(), "r");
+    if (!f) return;
+    char line[256];
+    while (fgets(line, sizeof(line), f)) {
+        int v;
+        if (sscanf(line, "fullscreen = %d", &v) == 1) setting_fullscreen = v != 0;
+    }
+    fclose(f);
+}
+
+void save_settings() {
+    FILE *f = fopen(settings_path().c_str(), "w");
+    if (!f) return;
+    fprintf(f, "fullscreen = %d\n", setting_fullscreen ? 1 : 0);
+    fclose(f);
+}
+
+// F11 or Alt+Enter: borderless fullscreen on the window's display, remembered for next time.
+void set_fullscreen(bool on) {
+    if (!window) return;
+    SDL_SetWindowFullscreen(window, on ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
+    SDL_ShowCursor(on ? SDL_DISABLE : SDL_ENABLE);
+}
+
+void toggle_fullscreen() {
+    setting_fullscreen = !setting_fullscreen;
+    set_fullscreen(setting_fullscreen);
+    save_settings();
+}
+
+bool fullscreen_key(const SDL_KeyboardEvent &k) {
+    if (k.repeat) return false;
+    return k.keysym.scancode == SDL_SCANCODE_F11 ||
+           ((k.keysym.scancode == SDL_SCANCODE_RETURN || k.keysym.scancode == SDL_SCANCODE_KP_ENTER) && (k.keysym.mod & KMOD_ALT));
+}
 
 void run_paused() {
     if (audio) {
@@ -273,6 +328,7 @@ void run_paused() {
         if (pause_until && host_ns() >= pause_until) break;
         if (!SDL_WaitEventTimeout(&e, 100)) continue;
         if (e.type == SDL_QUIT) quit = true;
+        if (e.type == SDL_KEYDOWN && fullscreen_key(e.key)) toggle_fullscreen();
         if (e.type == SDL_KEYDOWN && e.key.keysym.scancode == SDL_SCANCODE_F5 && !e.key.repeat) break;
     }
     pause_until = 0;
@@ -288,6 +344,7 @@ void platform_frame() {
         case SDL_QUIT: quit = true; break;
         case SDL_KEYDOWN:
             if (e.key.keysym.scancode == SDL_SCANCODE_F5 && !e.key.repeat) pause_requested = true;
+            if (fullscreen_key(e.key)) toggle_fullscreen();
             break;
         case SDL_CONTROLLERDEVICEADDED:
             if (!pad) open_pad();
