@@ -442,8 +442,15 @@ struct Ide : Device, PciDevice {
 
 namespace rt {
 
+static Ide *ide_device;
+
+bool ide_shutdown() {
+    if (ide_device) ide_device->disk.save();
+    return true;
+}
+
 bool ide_init(const std::string &chd, const std::string &overlay) {
-    Ide *ide = new Ide();
+    Ide *ide = ide_device = new Ide();
     if (!ide->disk.open(chd, overlay)) {
         log("ide: cannot open %s", chd.c_str());
         return false;

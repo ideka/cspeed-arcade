@@ -5,6 +5,7 @@
 // It serves Glide's start-up probes (which draw and read the pixels back), LFB reads, frame dumps, and
 // is the reference the GPU renderer is checked against.
 #include "swrender.h"
+#include "platform.h"
 
 #include <algorithm>
 #include <bit>
@@ -829,10 +830,13 @@ void SoftwareRenderer::swap(const VoodooState &) {}
 
 void SoftwareRenderer::vblank(const VoodooState &st) {
     frame++;
-    if (dump_dir.empty() || frame % dump_every || st.fb.front == ~0u || !st.fb.rowpixels) return;
+    if (st.fb.front == ~0u || !st.fb.rowpixels) return;
     uint32_t dims = st.fbi[vVideoDimensions];
     int w = (int)(dims & 0x3FF), h = (int)((dims >> 16) & 0x3FF);
     if (w <= 0 || h <= 0 || w > (int)st.fb.rowpixels) { w = (int)st.fb.rowpixels; h = st.yorigin + 1; }
+    if (st.fb.front + (size_t)h * st.fb.rowpixels * 2 <= (2u << 20))
+        platform_present_565((const uint16_t *)(st.fb.ram + st.fb.front), w, h, (int)st.fb.rowpixels);
+    if (dump_dir.empty() || frame % dump_every) return;
     std::vector<uint8_t> rgb(w * h * 3);
     const uint16_t *src = (const uint16_t *)(st.fb.ram + st.fb.front);
     for (int y = 0; y < h; y++)

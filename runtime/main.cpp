@@ -2,6 +2,7 @@
 // over to C (BootUp).
 #include "runtime.h"
 #include "swrender.h"
+#include "platform.h"
 #include "../generated/funcs.h"
 
 #include <cstdio>
@@ -37,12 +38,15 @@ static void load_elf(const std::vector<uint8_t> &elf) {
 
 void devices_init(const char *data_dir);
 
+#include <SDL.h>
+
 int main(int argc, char **argv) {
     const char *data_dir = argc > 1 ? argv[1] : "data";
     std::string dir = data_dir;
     rt_ram = (uint8_t *)calloc(1, RAM_SIZE);
     load_elf(read_data_file(dir + "/vmunix"));
     rt::set_boot_rom(read_data_file(dir + "/caspd1_2.u32"));
+    if (!rt::platform_init(getenv("ARC_HEADLESS") != nullptr)) rt::fatal("cannot open the window");
     devices_init(data_dir);
 
     static Ctx c{};

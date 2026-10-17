@@ -6,7 +6,10 @@
 // applied until calibration is over.
 #include "board.h"
 
+#include "platform.h"
+
 #include <algorithm>
+#include <cmath>
 
 namespace rt {
 
@@ -17,10 +20,40 @@ static uint32_t output_last, output_mode;
 // DIP switch 1 on (0) skips the force-feedback wheel calibration at start-up, which needs a real
 // motorised wheel.
 uint16_t input_dips() { return 0xFFFE; }
-uint16_t input_system() { return 0xFFFF; }
-uint16_t input_in1() { return 0x0FFF; } // gearshift bits (0xF000) active high: none engaged
+// SYSTEM (active low): coin 1 0x01, start 0x04, test 0x10, service 0x40.
+uint16_t input_system() {
+    const Controls &c = platform_controls();
+    uint16_t v = 0xFFFF;
+    if (c.coin) v &= ~0x01;
+    if (c.start) v &= ~0x04;
+    if (c.test) v &= ~0x10;
+    if (c.service) v &= ~0x40;
+    return v;
+}
 
-static uint8_t raw_analog(int channel) { return channel == 0 ? 0x80 : 0x00; }
+// IN1 (active low): radio 0x02, views 0x10/0x20/0x40; bits 12-15 the gear last selected (one-hot).
+static uint16_t gear = 1;
+uint16_t input_in1() {
+    const Controls &c = platform_controls();
+    uint16_t v = 0x0FFF;
+    if (c.radio) v &= ~0x02;
+    if (c.view1) v &= ~0x10;
+    if (c.view2) v &= ~0x20;
+    if (c.view3) v &= ~0x40;
+    if (c.gear) gear = (uint16_t)(1 << (c.gear - 1));
+    return v | (uint16_t)(gear << 12);
+}
+
+// ADC channels: 0 steering (0x10-0xF0, centre 0x80), 1 accelerator, 2 brake (0x00 released - 0xFF).
+static uint8_t raw_analog(int channel) {
+    const Controls &c = platform_controls();
+    switch (channel) {
+    case 0: return (uint8_t)std::lround(0x80 + c.steering * 0x70);
+    case 1: return (uint8_t)std::lround(c.accel * 255);
+    case 2: return (uint8_t)std::lround(c.brake * 255);
+    }
+    return 0x80;
+}
 
 uint8_t analog_input(int channel) {
     int v = raw_analog(channel);
@@ -42,6 +75,6 @@ void widget_output(uint32_t data) {
     if (!(data & (1 << 10)) && output_mode == 4) wheel_force = (int8_t)~arg; // wheel motor
 }
 
-void vblank() {}
+void vblank() { platform_frame(); }
 
 } // namespace rt
