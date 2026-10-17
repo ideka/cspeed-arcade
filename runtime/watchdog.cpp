@@ -12,6 +12,7 @@
 #include <thread>
 
 extern volatile uint32_t rt_last_loop_pc;
+namespace rt { Ctx *main_ctx; }
 
 namespace rt {
 
@@ -87,7 +88,11 @@ void watchdog_start() {
         for (;;) {
             std::this_thread::sleep_for(std::chrono::seconds(3));
             uint32_t pc = rt_last_loop_pc;
-            log("watch: last guest loop %08x (%s), triangles %d, fills %d", pc, func_name(pc), sw_counts[1], sw_counts[3]);
+            extern Ctx *main_ctx;
+            uint32_t irq_lines_debug();
+            log("watch: last guest loop %08x (%s), triangles %d, fills %d; irq lines %02x, SR %08x, Cause %08x", pc,
+                func_name(pc), sw_counts[1], sw_counts[3], irq_lines_debug(), main_ctx ? main_ctx->cop0[COP0_STATUS] : 0,
+                main_ctx ? main_ctx->cop0[COP0_CAUSE] : 0);
             print_stack(process, main_thread);
             static int reports;
             if (++reports == 6) dump_trace(3000);

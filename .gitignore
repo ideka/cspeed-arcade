@@ -12,3 +12,4 @@
 *.log
 trace_dump*.txt
 __pycache__/
+/*.wav

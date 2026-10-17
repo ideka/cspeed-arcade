@@ -9,9 +9,13 @@ namespace rt {
 extern int depth;
 static uint32_t irq_lines; // IP2..IP6 (bit 0 = IP2)
 static bool timer_irq;     // IP7: Count == Compare
+// As in MAME: the compare interrupt is armed by a Compare or Count write and fires once.
+static bool timer_armed;
 static uint32_t last_count;
 static const uint32_t EXCEPT_HANDLER = 0x80011180; // `except`, which the general exception vector jumps to
 int depth;
+
+uint32_t irq_lines_debug() { return irq_lines | (timer_irq ? 0x20 : 0); }
 
 void set_irq(int line, bool on) {
     if (on) irq_lines |= 1u << line;
@@ -20,16 +24,21 @@ void set_irq(int line, bool on) {
 
 uint32_t pending_ip() { return (irq_lines << 10) | (timer_irq ? 0x8000u : 0); }
 
-void compare_written(Ctx *c) {
-    timer_irq = false;
+void compare_written(Ctx *c, bool clear) {
+    if (clear) timer_irq = false;
+    timer_armed = true;
     last_count = rt_mfc0(c, COP0_COUNT);
 }
 
 static void check_timer(Ctx *c) {
+    if (!timer_armed) return;
     uint32_t now = rt_mfc0(c, COP0_COUNT);
     uint32_t cmp = c->cop0[COP0_COMPARE];
     // Did Count pass Compare since the last check?
-    if (cmp - last_count <= now - last_count && cmp != last_count) timer_irq = true;
+    if (cmp - last_count <= now - last_count && cmp != last_count) {
+        timer_irq = true;
+        timer_armed = false;
+    }
     last_count = now;
 }
 

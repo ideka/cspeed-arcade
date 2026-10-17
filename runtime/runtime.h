@@ -41,7 +41,7 @@ void call(Ctx *c, uint32_t addr);
 // Interrupts (interrupts.cpp). Lines are the CPU's IP2..IP7 inputs (0..5).
 void set_irq(int line, bool on);
 uint32_t pending_ip();           // Cause.IP bits for the external and timer lines
-void compare_written(Ctx *c);
+void compare_written(Ctx *c, bool clear); // Compare (clear = true) or Count written
 void deliver_interrupts(Ctx *c);
 
 extern bool trace_mmio;

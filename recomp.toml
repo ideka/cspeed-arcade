@@ -4,7 +4,6 @@
 skip = [
     0x80000000, # startup: the image header, not code
     0x80010c68, # UnLock: I/O ASIC unlock handshake (returns through a computed address)
-    0x80068b08, # SoundInit: temporary, until the DCS2 sound board is emulated
 ]
 
 # Extra function entry points the traversal cannot find (reached only through pointers).

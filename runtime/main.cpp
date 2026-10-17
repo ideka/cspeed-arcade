@@ -10,9 +10,9 @@
 #include <string>
 #include <vector>
 
-namespace rt { void watchdog_start(); }
+namespace rt { void watchdog_start(); extern Ctx *main_ctx; }
 
-static std::vector<uint8_t> read_file(const std::string &path) {
+std::vector<uint8_t> read_data_file(const std::string &path) {
     std::ifstream f(path, std::ios::binary);
     if (!f) rt::fatal("cannot open %s", path.c_str());
     return std::vector<uint8_t>((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
@@ -41,13 +41,14 @@ int main(int argc, char **argv) {
     const char *data_dir = argc > 1 ? argv[1] : "data";
     std::string dir = data_dir;
     rt_ram = (uint8_t *)calloc(1, RAM_SIZE);
-    load_elf(read_file(dir + "/vmunix"));
-    rt::set_boot_rom(read_file(dir + "/caspd1_2.u32"));
+    load_elf(read_data_file(dir + "/vmunix"));
+    rt::set_boot_rom(read_data_file(dir + "/caspd1_2.u32"));
     devices_init(data_dir);
 
     static Ctx c{};
     c.cop0[COP0_STATUS] = 0xF4010080; // as boot_entry leaves it: COP0-3 usable, FR, BEV off, IE off
     // R5000: 32 KB instruction and data caches with 32-byte lines, kseg0 cacheable.
+    c.cop0[COP0_COMPARE] = 0xFFFFFFFF;
     c.cop0[COP0_CONFIG] = (3 << 9) | (3 << 6) | (1 << 5) | (1 << 4) | 3;
     // What boot_entry records after probing the caches (config_cache) and the CPU.
     const uint32_t icache = 0x8000, dcache = 0x8000, iline = 32, dline = 32;
@@ -60,6 +61,7 @@ int main(int argc, char **argv) {
     c.fcr31 = 0x01000E00;
     c.r[29] = S32(0x807FFF00);
     c.budget = 2000;
+    rt::main_ctx = &c;
     if (getenv("ARC_WATCH")) rt::watchdog_start();
     rt::log("starting at BootUp");
     f_8007729c(&c);

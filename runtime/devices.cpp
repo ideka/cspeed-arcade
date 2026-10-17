@@ -4,6 +4,7 @@
 //   0x0C000000  Galileo GT64010 system controller (galileo.cpp)
 //   0x16000000+ board registers on chip select 3 (board.cpp)
 #include "board.h"
+#include "dcs.h"
 #include "galileo.h"
 #include "swrender.h"
 
@@ -27,14 +28,25 @@ struct Stub : rt::Device {
     }
 };
 
+// The I/O ASIC's sound FIFO (chip select 1): stream data for the sound board.
+struct SoundFifo : rt::Device {
+    SoundFifo() : Device("soundfifo", 0x13000000, 0x10) {}
+    uint32_t read(uint32_t, int) override { return 0; }
+    void write(uint32_t, uint32_t v, int) override { rt::dcs_fifo_write((uint16_t)v); }
+};
+
 } // namespace
 
 namespace rt { bool ide_init(const std::string &chd, const std::string &overlay); }
 
+std::vector<uint8_t> read_data_file(const std::string &path);
+
 void devices_init(const char *data_dir) {
+    rt::dcs_init(read_data_file(std::string(data_dir) + "/sound102.u95"));
     rt::galileo_init();
     rt::board_init(std::string(data_dir) + "/cmos.bin");
     rt::pci_add(new rt::PciDevice(9, 0x0002100B, 0x01018F01)); // NS 87415 IDE
+    rt::add_device(new SoundFifo());
     static rt::SoftwareRenderer sw;
     if (const char *d = getenv("ARC_DUMP_FRAMES")) sw.dump_dir = d;
     rt::voodoo_init(&sw);

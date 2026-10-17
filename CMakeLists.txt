@@ -15,7 +15,7 @@ set(CHDR_WANT_TESTS OFF CACHE BOOL "" FORCE)
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 add_subdirectory(${CMAKE_SOURCE_DIR}/lib/libchdr EXCLUDE_FROM_ALL)
 
-file(GLOB RUNTIME_SOURCES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/runtime/*.cpp)
+file(GLOB RUNTIME_SOURCES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/runtime/*.cpp ${CMAKE_SOURCE_DIR}/runtime/adsp/*.cpp)
 add_executable(CaliforniaSpeedArcade ${RUNTIME_SOURCES})
 target_include_directories(CaliforniaSpeedArcade PRIVATE ${CMAKE_SOURCE_DIR}/runtime)
 target_link_libraries(CaliforniaSpeedArcade PRIVATE GuestCode chdr-static dbghelp)

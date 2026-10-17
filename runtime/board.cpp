@@ -8,6 +8,7 @@
 //   0x17500000  interrupt state        0x17600000  interrupt state 2
 //   0x17700000  VBLANK clear           0x17900000  status LEDs     0x17F00000  ASIC reset
 #include "board.h"
+#include "dcs.h"
 
 #include <cstdio>
 #include <cstring>
@@ -58,9 +59,10 @@ struct Board : rt::Device {
 
     void update_ioasic_irq() {
         uint16_t bits = 0x2000;              // UART transmitter empty
-        bits |= 0x0080;                      // sound output buffer empty (no DCS yet)
+        if (rt::dcs_input_empty()) bits |= 0x0080; // sound board can take data
+        if (rt::dcs_output_full()) bits |= 0x0040; // sound board has data for us
         bits |= io[IO_UARTIN] & 0x3F00;
-        bits |= 0x0008;                      // sound FIFO empty
+        if (rt::dcs_fifo_status() & 8) bits |= 0x0008; // sound FIFO empty
         bits |= 1;
         io[IO_INTSTAT] = bits;
         bool on = (io[IO_INTCTL] & 1) && (io[IO_INTSTAT] & io[IO_INTCTL] & 0x3FFE);
@@ -145,6 +147,7 @@ struct Board : rt::Device {
     }
 
     void update(uint64_t now) override {
+        rt::dcs_update(now);
         static uint64_t last_save;
         if (now - last_save > 2000000000ull) {
             last_save = now;
@@ -230,5 +233,9 @@ void board_init(const std::string &cmos_path) {
 void board_shutdown() { board->save_cmos(); }
 
 void board_vblank(bool state) { board->vblank_assert(state); }
+
+void dcs_irq_changed() {
+    if (board) board->update_ioasic_irq();
+}
 
 } // namespace rt

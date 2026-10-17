@@ -21,6 +21,11 @@ static std::vector<uint8_t> boot_rom;
 static std::vector<Device *> devices;
 static auto start_time = std::chrono::steady_clock::now();
 bool trace_mmio = getenv("ARC_TRACE_MMIO") != nullptr;
+// ARC_TRACE_MMIO=1 traces every device; otherwise only devices whose name contains the value.
+static const char *trace_filter = getenv("ARC_TRACE_MMIO");
+static bool traced(const char *name) {
+    return trace_filter && (!strcmp(trace_filter, "1") || strstr(name, trace_filter));
+}
 
 void log(const char *fmt, ...) {
     va_list ap;
@@ -129,7 +134,7 @@ extern "C" uint32_t rt_rd_slow(uint32_t a, int size) {
     }
     if (Device *d = find_device(p)) {
         v = d->read(p - d->base, size);
-        if (trace_mmio) log("%s rd%d %08x -> %08x", d->name, size * 8, p, v);
+        if (trace_mmio && traced(d->name)) log("%s rd%d %08x -> %08x", d->name, size * 8, p, v);
         return v;
     }
     unknown("read", a, 0, size);
@@ -147,7 +152,7 @@ extern "C" void rt_wr_slow(uint32_t a, uint32_t v, int size) {
         return;
     }
     if (Device *d = find_device(p)) {
-        if (trace_mmio) log("%s wr%d %08x <- %08x", d->name, size * 8, p, v);
+        if (trace_mmio && traced(d->name)) log("%s wr%d %08x <- %08x", d->name, size * 8, p, v);
         d->write(p - d->base, v, size);
         return;
     }
@@ -247,10 +252,11 @@ extern "C" void rt_mtc0(Ctx *c, int reg, uint32_t v) {
     case COP0_COUNT:
         count_base_ns = now_ns();
         count_base = v;
+        rt::compare_written(c, false);
         break;
     case COP0_COMPARE:
         c->cop0[reg] = v;
-        rt::compare_written(c);
+        rt::compare_written(c, true);
         break;
     case COP0_CAUSE:
         c->cop0[reg] = (c->cop0[reg] & ~0x300u) | (v & 0x300u); // only the software interrupt bits
