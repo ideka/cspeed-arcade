@@ -1,0 +1,14 @@
+# Build output
+/build/
+# Generated from the game's executable: never commit
+/generated/
+# Game data, ROMs and anything produced from them
+/data/
+/roms/
+/frames/
+# Third-party sources used as reference (tools/fetch_reference.sh)
+/reference/
+# Debug output
+*.log
+trace_dump*.txt
+__pycache__/

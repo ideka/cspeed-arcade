@@ -1,0 +1,43 @@
+// Hardware of the Midway Seattle board (California Speed). Physical addresses:
+//   0x08000000  3dfx Voodoo (SST-1) on PCI
+//   0x0A000000  PCI I/O space: IDE controller (ide.cpp)
+//   0x0C000000  Galileo GT64010 system controller (galileo.cpp)
+//   0x16000000+ board registers on chip select 3 (board.cpp)
+#include "board.h"
+#include "galileo.h"
+#include "swrender.h"
+
+#include <cstdlib>
+
+namespace {
+
+// Placeholder: remembers writes, reads back what was written, logs the first accesses.
+struct Stub : rt::Device {
+    std::vector<uint32_t> regs;
+    int logged = 0;
+    Stub(const char *n, uint32_t b, uint32_t s) : Device(n, b, s), regs(s / 4) {}
+    uint32_t read(uint32_t off, int) override {
+        uint32_t v = regs[off / 4];
+        if (logged++ < 64) rt::log("%s read  +%05x -> %08x", name, off, v);
+        return v;
+    }
+    void write(uint32_t off, uint32_t v, int) override {
+        if (logged++ < 64) rt::log("%s write +%05x <- %08x", name, off, v);
+        regs[off / 4] = v;
+    }
+};
+
+} // namespace
+
+namespace rt { bool ide_init(const std::string &chd, const std::string &overlay); }
+
+void devices_init(const char *data_dir) {
+    rt::galileo_init();
+    rt::board_init(std::string(data_dir) + "/cmos.bin");
+    rt::pci_add(new rt::PciDevice(9, 0x0002100B, 0x01018F01)); // NS 87415 IDE
+    static rt::SoftwareRenderer sw;
+    if (const char *d = getenv("ARC_DUMP_FRAMES")) sw.dump_dir = d;
+    rt::voodoo_init(&sw);
+    if (!rt::ide_init(std::string(data_dir) + "/calspeed.chd", std::string(data_dir) + "/hdd_writes.bin"))
+        rt::fatal("the hard disk image (calspeed.chd) is required");
+}

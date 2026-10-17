@@ -1,0 +1,26 @@
+# Recompiler configuration (tools/recomp.py).
+
+# Functions implemented natively by the runtime instead of being recompiled.
+skip = [
+    0x80000000, # startup: the image header, not code
+    0x80010c68, # UnLock: I/O ASIC unlock handshake (returns through a computed address)
+    0x80068b08, # SoundInit: temporary, until the DCS2 sound board is emulated
+]
+
+# Extra function entry points the traversal cannot find (reached only through pointers).
+entries = []
+
+# C code inserted before an instruction: [[hook]] at = 0x..., code = "..."
+
+# Glide's fatal error callback: show the message.
+[[hook]]
+at = 0x800d1ae4
+code = 'rt_guest_message(c, "glide error", (uint32_t)c->r[4]);'
+
+# On-screen text (col, row, string, colour): log it.
+[[hook]]
+at = 0x800a84ec
+code = 'rt_guest_message(c, "text", (uint32_t)c->r[6]);'
+[[hook]]
+at = 0x800a8168
+code = 'rt_guest_message(c, "text", (uint32_t)c->r[6]);'
