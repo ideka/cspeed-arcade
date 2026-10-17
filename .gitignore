@@ -22,3 +22,4 @@ __pycache__/
 /prof_*.txt
 /saved_state/
 /tools/adspdis/*.exe
+/cmp/
