@@ -454,6 +454,7 @@ struct Voodoo : Device {
         uint32_t format = (texmode >> 8) & 15;
         uint32_t bpt = format < 8 ? 1 : 2;
         uint32_t index = off >> 2;
+        if ((index >> 19) & 3) return; // only TMU 0 is fitted: writes for the others go nowhere (as MAME)
         uint32_t lod = (index >> 15) & 15, t = (index >> 7) & 0xFF;
         bool seq8 = texmode & (1u << 31);
         uint32_t s = (index << ((seq8 && bpt == 1) ? 2 : 1)) & 0xFF;

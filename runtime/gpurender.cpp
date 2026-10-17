@@ -943,6 +943,7 @@ struct GpuRenderer : Renderer {
         flush();
         uint32_t front = st.fb.front;
         flush_lfb(front);
+        dump_full(front);
         present(front);
         // Drop textures not used for a while.
         if (frame % 600 == 0)
@@ -953,6 +954,33 @@ struct GpuRenderer : Renderer {
                 } else {
                     ++it;
                 }
+    }
+
+    // ARC_DUMP_GPU=dir: the front buffer at full internal resolution (ARC_DUMP_EVERY, ARC_DUMP_FROM).
+    void dump_full(uint32_t front) {
+        static const char *dir = getenv("ARC_DUMP_GPU");
+        static int every = getenv("ARC_DUMP_EVERY") ? std::max(1, atoi(getenv("ARC_DUMP_EVERY"))) : 60;
+        static int from = getenv("ARC_DUMP_FROM") ? atoi(getenv("ARC_DUMP_FROM")) : 0;
+        if (!dir || frame % every || (int)frame < from) return;
+        auto it = buffers.find(front);
+        if (it == buffers.end()) return;
+        int w = width * scale, h = height * scale;
+        std::vector<uint32_t> px((size_t)w * h);
+        glBindFramebuffer(GL_FRAMEBUFFER, it->second.fbo);
+        glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
+        std::vector<uint8_t> rgb((size_t)w * h * 3);
+        for (int y = 0; y < h; y++)
+            for (int x = 0; x < w; x++) {
+                uint32_t c = px[(size_t)(h - 1 - y) * w + x];
+                uint8_t *d = &rgb[((size_t)y * w + x) * 3];
+                d[0] = c & 0xFF;
+                d[1] = (c >> 8) & 0xFF;
+                d[2] = (c >> 16) & 0xFF;
+            }
+        char name[64];
+        snprintf(name, sizeof(name), "/full%05d.png", (int)frame);
+        write_png(dir + std::string(name), w, h, rgb.data());
+        have_state = false;
     }
 
     void present(uint32_t front) {
@@ -1155,6 +1183,8 @@ struct Both : Renderer {
         if (dir.empty() || frame % every || frame < from) return;
         gpu->flush();
         gpu->flush_all_lfb();
+        gpu->frame = frame;
+        gpu->dump_full(st.fb.front);
         auto it = gpu->buffers.find(st.fb.front);
         if (it == gpu->buffers.end()) return;
         int w = gpu->width, h = gpu->height, sc = gpu->scale;
