@@ -62,17 +62,24 @@ void add_device(Device *d) { devices.push_back(d); }
 
 void update_devices() {
     uint64_t now = now_ns();
-    // ARC_PEEK=addr (debugging): log a guest RAM word whenever it changes, at most every 0.2 s.
-    static uint32_t peek = getenv("ARC_PEEK") ? (uint32_t)strtoul(getenv("ARC_PEEK"), nullptr, 16) : 0;
-    if (peek) {
-        static uint32_t last = ~0u;
-        static uint64_t next = 0;
-        if (now >= next) {
-            uint32_t v = rd32(peek);
-            if (v != last) log("peek %08x = %08x (%d) at %.2f s", peek, v, (int)v, now / 1e9);
-            last = v;
-            next = now + 200000000;
+    // ARC_PEEK=addr,addr,... (debugging): log guest RAM words whenever they change, at most every 0.2 s.
+    static std::vector<std::pair<uint32_t, uint32_t>> peeks = [] {
+        std::vector<std::pair<uint32_t, uint32_t>> v;
+        for (const char *p = getenv("ARC_PEEK"); p && *p;) {
+            char *end;
+            v.push_back({(uint32_t)strtoul(p, &end, 16), ~0u});
+            p = *end ? end + 1 : end;
         }
+        return v;
+    }();
+    static uint64_t peek_next = 0;
+    if (!peeks.empty() && now >= peek_next) {
+        for (auto &[addr, last] : peeks) {
+            uint32_t v = rd32(addr);
+            if (v != last) log("peek %08x = %08x (%d) at %.2f s", addr, v, (int)v, now / 1e9);
+            last = v;
+        }
+        peek_next = now + 200000000;
     }
     static double ramdump_at = getenv("ARC_RAMDUMP") ? atof(getenv("ARC_RAMDUMP")) : -1;
     if (ramdump_at >= 0 && now / 1e9 >= ramdump_at) { // debugging: guest RAM to ram.bin, once
@@ -386,6 +393,28 @@ extern "C" void rt_guest_message(Ctx *c, const char *what, uint32_t addr) {
     buf[n] = 0;
     log("%s: %s (ra %08x %s)", what, buf, (uint32_t)c->r[31], func_name((uint32_t)c->r[31]));
     if (strstr(buf, "rror")) dump_trace(20000);
+}
+
+// The game's diagnostics (TestMessage). Some repeat every frame ("3d collision detected!"): a run of
+// the same message is logged once, with its count when the run ends.
+extern "C" void rt_game_message(Ctx *, uint32_t addr) {
+    static std::string last;
+    static int repeats;
+    std::string msg;
+    for (int n = 0; n < 511; n++) {
+        char ch = (char)rd8(addr + n);
+        if (!ch) break;
+        msg += ch;
+    }
+    if (msg == last) {
+        repeats++;
+        return;
+    }
+    if (repeats) log("game: (repeated %d times)", repeats);
+    repeats = 0;
+    last = msg;
+    while (!msg.empty() && (msg.back() == '\n' || msg.back() == ' ')) msg.pop_back(); // most end with a newline
+    if (!msg.empty()) log("game: %s", msg.c_str());
 }
 
 // ---- call tracing ----

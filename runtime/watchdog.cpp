@@ -96,8 +96,13 @@ void watchdog_start() {
             last_swaps = swap_count;
             static uint64_t last_render, last_time;
             uint64_t t = now_ns(), r = sw_render_ns;
-            if (last_time) log("watch: rendering took %.0f%% of the time", 100.0 * (r - last_render) / (t - last_time));
+            extern volatile uint64_t dsp_host_ns;
+            static uint64_t last_dsp;
+            uint64_t d = dsp_host_ns;
+            if (last_time) log("watch: rendering took %.0f%% of the time, the sound DSP %.0f%%", 100.0 * (r - last_render) / (t - last_time),
+                               100.0 * (d - last_dsp) / (t - last_time));
             last_render = r;
+            last_dsp = d;
             last_time = t;
             log("watch: last guest loop %08x (%s), triangles %d, fills %d; irq lines %02x, SR %08x, Cause %08x", pc,
                 func_name(pc), sw_counts[1], sw_counts[3], irq_lines_debug(), main_ctx ? main_ctx->cop0[COP0_STATUS] : 0,

@@ -46,7 +46,8 @@ probing results are written by main.cpp.
 Controller: left stick steer, RT/LT (or A/B) accelerator/brake, Start, Back = coin, X/Y/RB views,
 LB radio, d-pad gears 1-4. Keyboard: arrows, Enter/1 start, 5 coin, Q/W/E views, R radio, A/S/D/F
 gears, F2 test (operator menu), 9 service, F5 pause, F9 widescreen (on by default; the 3D view widens
-at the next screen), F11 or Alt+Enter fullscreen (both remembered in
+at the next screen), F11 or Alt+Enter fullscreen (applied 1 s after start-up: switching right at start-up left the game
+running sluggishly; both remembered in
 settings.ini in the SDL per-user folder, %APPDATA%/cspeed-arcade/cspeed-arcade on Windows). Three coins per credit on the default settings.
 
 ## Environment variables
@@ -57,7 +58,9 @@ ARC_DUMP_FRAMES (with ARC_DUMP_EVERY=<vblanks>, ARC_DUMP_FROM=<vblank>), ARC_DUM
 the internal resolution, same timing settings), ARC_DUMP_AUDIO, ARC_WATCH,
 ARC_CALLTRACE, ARC_TRACE_MMIO[=device], ARC_SELECT_TIMER=1 (keep the selection screens' time limit, which
 is otherwise held at 5 seconds left). Debugging: ARC_CALLCOUNT/ARC_CALLLOG=addr,... (guest calls),
-ARC_PEEK=addr (a RAM word as it changes), ARC_RAMDUMP=<seconds>.
+ARC_PEEK=addr,... (RAM words as they change), ARC_RAMDUMP=<seconds>. The game's own diagnostics
+(TestMessage) are always logged as `game: ...`; ARC_WATCH also reports the share of host time the sound
+DSP takes.
 Sound debugging: ARC_DCS_LOG=file (host->DSP words, stamped with host and audio time), ARC_DUMP_FIFO,
 ARC_DSP_DUMP=<seconds> (program/data memory dumps and a 1 s PC profile), ARC_DSP_TRACE=file (registers
 at each instruction of the first effect frame, in the format of a MAME debugger trace with
@@ -65,6 +68,16 @@ at each instruction of the first effect frame, in the format of a MAME debugger 
 
 ## Next
 
+- Starting in fullscreen made the game run sluggishly for the whole session (long "No VSYNC" screen,
+  late input); the switch is now delayed by 1 s as a workaround. Fix it properly: find the real cause
+  and remove the delay.
+- Vertical black bars sometimes show up when driving up a steep hill.
+- Artifacts remain around some 2D UI elements (e.g. the INSERT COIN text).
+- Out of texture memory at the end of San Diego ("No More Unused Textures: ENDGAME/fin_time"): the
+  track's sector streaming leaves texture memory at ~3.9 of 4 MB (freed textures are only reused by
+  textures of the same size), and the finish needs 176 KB more. Whether it fits depends on load timing.
+  The game places sprites at the top of texture memory outside its allocator, so the real board is
+  presumably further from the limit; the difference is not found yet.
 - Free play / operator settings defaults; idle the host CPU in the game's wait loops.
 - Frame pacing against the host display (57 Hz game on 60+ Hz screens), widescreen, settings UI.
 - The "No VSYNC interrupts detected" boot message; a translucent rectangle seen on the left of

@@ -13,6 +13,8 @@
 #include <cstring>
 #include <vector>
 
+namespace rt { volatile uint64_t dsp_host_ns; } // host time spent running the DSP (ARC_WATCH)
+
 namespace rt {
 namespace {
 
@@ -521,7 +523,9 @@ struct Dcs : adsp::Bus {
             last_header = now;
             wav_header();
         }
+        uint64_t t0 = host_ns();
         run_until(cycles + dt * DSP_HZ / 1000000000ull);
+        dsp_host_ns += host_ns() - t0;
     }
 
     // ---- I/O ASIC FIFO (host to DSP stream data) ----
