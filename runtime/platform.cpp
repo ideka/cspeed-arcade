@@ -217,6 +217,7 @@ void queue_audio() {
 void load_settings();
 void set_fullscreen(bool on);
 extern bool setting_fullscreen, setting_widescreen;
+bool fullscreen_pending; // the saved setting, not applied yet (see platform_init)
 
 bool platform_init(bool headless) {
     headless_mode = headless;
@@ -264,7 +265,9 @@ bool platform_init(bool headless) {
     if (!context || !gl_load()) return false;
     SDL_GL_SetSwapInterval(0); // the game's own timing paces the frames
     setup_present();
-    if (setting_fullscreen && !background) set_fullscreen(true);
+    // The saved fullscreen setting is applied a second in (platform_frame): switching while the game
+    // checks the video timing at boot leaves it running sluggishly for the whole session.
+    fullscreen_pending = setting_fullscreen && !background;
     return true;
 }
 
@@ -342,6 +345,10 @@ void run_paused() {
 }
 
 void platform_frame() {
+    if (fullscreen_pending && now_ns() > 1000000000ull) {
+        fullscreen_pending = false;
+        if (setting_fullscreen) set_fullscreen(true);
+    }
     SDL_Event e;
     while (SDL_PollEvent(&e)) {
         switch (e.type) {
