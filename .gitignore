@@ -23,3 +23,4 @@ __pycache__/
 /saved_state/
 /tools/adspdis/*.exe
 /cmp/
+/build_env.local.bat
