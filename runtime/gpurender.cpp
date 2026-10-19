@@ -360,6 +360,7 @@ struct DrawState {
     float tex_w, tex_h;
     uint64_t fog_generation;
     int lfb;
+    int squeeze; // a 2D overlay squeezed to the middle in widescreen: so is its clipping window
     bool operator==(const DrawState &o) const { return memcmp(this, &o, sizeof(*this)) == 0; }
 };
 
@@ -896,7 +897,18 @@ struct GpuRenderer : Renderer {
             glDisable(GL_BLEND);
         }
         // clipping
-        if (fz & 1) {
+        if (d.squeeze) {
+            // A squeezed overlay is clipped where it would be on the 4:3 screen, the frame's edges
+            // included: what the game draws past them (a sprite sliding in from the side) stays hidden.
+            int cl = 0, cr = width, ct = 0, cb = height;
+            if (fz & 1) {
+                cl = (int)bits(d.clip_lr, 16, 10), cr = std::min((int)bits(d.clip_lr, 0, 10), width);
+                ct = (int)bits(d.clip_y, 16, 10), cb = std::min((int)bits(d.clip_y, 0, 10), height);
+            }
+            int x0 = (int)std::lround(overlay_x((float)cl) * scale), x1 = (int)std::lround(overlay_x((float)cr) * scale);
+            glEnable(GL_SCISSOR_TEST);
+            glScissor(x0, (height - cb) * scale, std::max(0, x1 - x0), std::max(0, cb - ct) * scale);
+        } else if (fz & 1) {
             int cl = (int)bits(d.clip_lr, 16, 10), cr = (int)bits(d.clip_lr, 0, 10);
             int ct = (int)bits(d.clip_y, 16, 10), cb = (int)bits(d.clip_y, 0, 10);
             cr = std::min(cr, width);
@@ -932,9 +944,6 @@ struct GpuRenderer : Renderer {
             tex_size_w = (float)(ti.wmask + 1);
             tex_size_h = (float)(ti.hmask + 1);
         }
-        DrawState ds = capture(st, tex, 0, off);
-        composite_pending_lfb(off);
-        use_state(ds, GL_TRIANGLES);
         // Values at a point: start + (p - 0.5 - floor(A)) * d/dx ... (the start values belong to the
         // centre of vertex A's pixel, as the hardware iterates them).
         float ax = (float)(t.ax >> 4), ay = (float)(t.ay >> 4);
@@ -958,6 +967,10 @@ struct GpuRenderer : Renderer {
             fullscreen = x0 <= 1 && x1 >= width - 1;
         }
         if (!flat) buffer(off).depth_tris++;
+        DrawState ds = capture(st, tex, 0, off);
+        ds.squeeze = flat && !fullscreen && platform_widescreen();
+        composite_pending_lfb(off);
+        use_state(ds, GL_TRIANGLES);
         auto vertex = [&](int32_t vx16, int32_t vy16) {
             float x = snap(vx16), y = snap(vy16);
             double dx = x - 0.5 - ax, dy = y - 0.5 - ay;
